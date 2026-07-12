@@ -76,6 +76,13 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
       setStatus(`カメラ起動中: ${track.label || '(名称不明)'}`);
     } catch (e) {
       if (gen !== streamSeq.current) return;
+      // 起動途中の失敗(video.play・デバイス列挙など)ではstreamを保持した
+      // まま抜けない: 取得済みtrackを停止し、参照と表示も解放する
+      // (activeにならず停止ボタンが出ないままカメラが動き続けるのを防ぐ)
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+      setActive(false);
       setStarting(false);
       setError(
         `カメラを起動できません: ${e instanceof Error ? e.message : String(e)}。` +
@@ -87,17 +94,21 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   async function takePhoto() {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return;
-    const { asset, blur } = await saveStillFromVideo(
-      v,
-      props.projectId,
-      `photo_${timestampName()}.jpg`,
-    );
-    setStatus(
-      `撮影しました: ${asset.name}(鮮鋭度 ${Math.round(blur.score)}${
-        blur.score < DEFAULT_BLUR_THRESHOLD ? ' — ブレの可能性あり' : ''
-      })`,
-    );
-    props.onCaptured();
+    try {
+      const { asset, blur } = await saveStillFromVideo(
+        v,
+        props.projectId,
+        `photo_${timestampName()}.jpg`,
+      );
+      setStatus(
+        `撮影しました: ${asset.name}(鮮鋭度 ${Math.round(blur.score)}${
+          blur.score < DEFAULT_BLUR_THRESHOLD ? ' — ブレの可能性あり' : ''
+        })`,
+      );
+      props.onCaptured();
+    } catch (e) {
+      setStatus(`撮影画像を保存できませんでした: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   function startRecording() {

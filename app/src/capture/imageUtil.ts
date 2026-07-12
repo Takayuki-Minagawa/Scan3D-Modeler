@@ -52,8 +52,11 @@ export async function saveStillFromVideo(
   const ctx = c.getContext('2d');
   if (!ctx) throw new Error('canvas 2Dコンテキストを取得できません');
   ctx.drawImage(video, 0, 0);
+  // 採点は保存画像と同じフレーム(canvas)から行う。encode後のlive videoを
+  // 再取得すると、撮影直後にカメラを動かした場合に保存画像と鮮鋭度が
+  // 別フレームになり、ブレ画像の採否が逆転するため
+  const blur = await scoreImageData(bitmapToImageData(c));
   const blob = await canvasToBlob(c, 'image/jpeg', 0.92);
-  const blur = await scoreImageData(bitmapToImageData(video));
   const asset = await addAsset({
     projectId,
     kind: 'image',
