@@ -1,6 +1,5 @@
 import { strToU8, strFromU8, unzip, zip, type Zippable } from 'fflate';
 import { db, uid, now } from '../db/db';
-import { getAssetBlob } from '../db/assets';
 import type { AssetMeta, Project, Stage } from '../types';
 
 /**
@@ -13,6 +12,8 @@ import type { AssetMeta, Project, Stage } from '../types';
  *   assets/<id>      … 各アセットのバイナリ
  *
  * ジョブ実行状態(checkpoint含む)は端末ローカルの実行状態のため含めない。
+ * したがって実行中(running)のstageは、取り込み先で再開できず永久に
+ * 実行中のまま残ってしまうため、エクスポート対象から除外する。
  */
 interface Manifest {
   format: 'scan2fem-project';
@@ -21,6 +22,12 @@ interface Manifest {
   project: Project;
   stages: Stage[];
   assets: AssetMeta[];
+}
+
+export interface ExportZipResult {
+  blob: Blob;
+  /** 実行中(未完了)のため除外した段階数 */
+  excludedRunningStages: number;
 }
 
 function zipAsync(data: Zippable): Promise<Uint8Array> {
@@ -35,12 +42,38 @@ function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
   });
 }
 
-export async function exportProjectZip(projectId: string): Promise<Blob> {
+export async function exportProjectZip(projectId: string): Promise<ExportZipResult> {
   const d = await db();
-  const project = await d.get('projects', projectId);
+  // 実行中ジョブはstage/assetを書き換え続けるため、まず停止を求める
+  const jobs = await d.getAllFromIndex('jobs', 'byProject', projectId);
+  if (jobs.some((j) => j.status === 'running')) {
+    throw new Error(
+      '実行中のジョブがあります。一時停止または完了させてからエクスポートしてください',
+    );
+  }
+
+  // 単一トランザクションで読み出し、途中で変更が入らない一貫した
+  // スナップショットを取る(stage参照切れ・blob欠落の混入防止)。
+  // 注意: このトランザクション内でIndexedDB以外のawaitを挟まないこと
+  const tx = d.transaction(['projects', 'stages', 'assets', 'blobs']);
+  const project = await tx.objectStore('projects').get(projectId);
   if (!project) throw new Error('プロジェクトが見つかりません');
-  const stages = await d.getAllFromIndex('stages', 'byProject', projectId);
-  const assets = await d.getAllFromIndex('assets', 'byProject', projectId);
+  const allStages = await tx.objectStore('stages').index('byProject').getAll(projectId);
+  const allAssets = await tx.objectStore('assets').index('byProject').getAll(projectId);
+  const stages = allStages.filter((s) => s.status !== 'running');
+  const stageIds = new Set(stages.map((s) => s.id));
+  const assets = allAssets.filter((a) => a.stageId === null || stageIds.has(a.stageId));
+  const blobs = new Map<string, Blob>();
+  for (const a of assets) {
+    const rec = await tx.objectStore('blobs').get(a.id);
+    if (!rec) {
+      throw new Error(
+        `アセット「${a.name}」の本体データが見つかりません(データ破損の可能性)。エクスポートを中止しました`,
+      );
+    }
+    blobs.set(a.id, rec.blob);
+  }
+  await tx.done;
 
   const manifest: Manifest = {
     format: 'scan2fem-project',
@@ -54,13 +87,16 @@ export async function exportProjectZip(projectId: string): Promise<Blob> {
     'project.json': strToU8(JSON.stringify(manifest, null, 1)),
   };
   for (const a of assets) {
-    const blob = await getAssetBlob(a.id);
+    const blob = blobs.get(a.id);
     if (blob) files[`assets/${a.id}`] = new Uint8Array(await blob.arrayBuffer());
   }
   const out = await zipAsync(files);
   const buf = new ArrayBuffer(out.byteLength);
   new Uint8Array(buf).set(out);
-  return new Blob([buf], { type: 'application/zip' });
+  return {
+    blob: new Blob([buf], { type: 'application/zip' }),
+    excludedRunningStages: allStages.length - stages.length,
+  };
 }
 
 /** インポート。ID衝突を避けるため全IDを振り直して新規プロジェクトとして取り込む */
@@ -95,6 +131,14 @@ export async function importProjectZip(file: Blob): Promise<Project> {
     id: remap(s.id),
     projectId: project.id,
     sourceStageId: s.sourceStageId ? remap(s.sourceStageId) : null,
+    // 旧形式ZIPに実行中stageが含まれる場合、ジョブ実行状態(checkpoint)は
+    // 引き継げないため失敗扱いに変換する(永久に実行中のまま残るのを防ぐ)
+    ...(s.status === 'running'
+      ? {
+          status: 'failed' as const,
+          note: [s.note, '実行途中に出力されたZIPのため中断扱い'].filter(Boolean).join(' / '),
+        }
+      : null),
   }));
   const assets: Array<{ meta: AssetMeta; oldId: string }> = manifest.assets.map((a) => ({
     oldId: a.id,

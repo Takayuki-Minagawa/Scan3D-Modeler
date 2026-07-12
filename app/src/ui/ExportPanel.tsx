@@ -22,9 +22,14 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
   async function exportZip() {
     setBusy('ZIP作成中…(データ量により時間がかかります)');
     try {
-      const blob = await exportProjectZip(props.project.id);
+      const { blob, excludedRunningStages } = await exportProjectZip(props.project.id);
       downloadBlob(blob, `${props.project.name}.zip`);
-      setBusy(`ZIP出力完了(${fmtBytes(blob.size)})`);
+      setBusy(
+        `ZIP出力完了(${fmtBytes(blob.size)})` +
+          (excludedRunningStages > 0
+            ? ` — 実行途中の段階${excludedRunningStages}件は再開情報を持ち出せないため含めていません`
+            : ''),
+      );
     } catch (e) {
       setBusy(`ZIP出力失敗: ${e instanceof Error ? e.message : String(e)}`);
     }
