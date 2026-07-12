@@ -9,34 +9,44 @@ export interface TriMesh {
 }
 
 export function makeDemoLMesh(): TriMesh {
-  // L字断面(反時計回り)。脚の厚さ6、辺長60。
-  const poly: Array<[number, number]> = [
+  // デモ点群(demoCloud.worker)と同じ配置のL字形状:
+  //   底板 x:[0,60], y:[0,6],  z:[0,40] / 立板 x:[0,60], y:[0,60], z:[34,40]
+  // 断面(z,y)平面のL字ポリゴンをx方向(0→60)へ押し出す。穴は省略(簡略形状)。
+  const profile: Array<[number, number]> = [
+    // [z, y] 反時計回り
     [0, 0],
-    [60, 0],
-    [60, 6],
-    [6, 6],
-    [6, 60],
-    [0, 60],
+    [40, 0],
+    [40, 60],
+    [34, 60],
+    [34, 6],
+    [0, 6],
   ];
-  const z0 = 0;
-  const z1 = 40;
-  const nv = poly.length;
+  // 凹多角形のため手動三角形分割(底板2枚+立板2枚)
+  const faceTris: Array<[number, number, number]> = [
+    [0, 1, 4],
+    [0, 4, 5],
+    [4, 1, 2],
+    [4, 2, 3],
+  ];
+  const x0 = 0;
+  const x1 = 60;
+  const nv = profile.length;
   const positions = new Float32Array(nv * 2 * 3);
   for (let i = 0; i < nv; i++) {
-    const [x, y] = poly[i];
-    positions.set([x, y, z1], i * 3); // 前面 (0..5)
-    positions.set([x, y, z0], (nv + i) * 3); // 背面 (6..11)
+    const [z, y] = profile[i];
+    positions.set([x0, y, z], i * 3); // x=0側 (0..5)
+    positions.set([x1, y, z], (nv + i) * 3); // x=60側 (6..11)
   }
   const idx: number[] = [];
-  // 前面(+z, CCW): 頂点0からの扇形分割(この断面では凸分割として成立する)
-  for (let i = 1; i < nv - 1; i++) idx.push(0, i, i + 1);
-  // 背面(-z): 巻き方向を反転
-  for (let i = 1; i < nv - 1; i++) idx.push(nv, nv + i + 1, nv + i);
-  // 側面
+  // x=0端面(外向き-x)
+  for (const [a, b, c] of faceTris) idx.push(a, b, c);
+  // x=60端面(外向き+x: 巻き方向を反転)
+  for (const [a, b, c] of faceTris) idx.push(nv + a, nv + c, nv + b);
+  // 側面(プロファイル各辺を押し出した四角形)
   for (let i = 0; i < nv; i++) {
     const j = (i + 1) % nv;
-    idx.push(i, nv + i, nv + j);
     idx.push(i, nv + j, j);
+    idx.push(i, nv + i, nv + j);
   }
   return { positions, indices: new Uint32Array(idx) };
 }
