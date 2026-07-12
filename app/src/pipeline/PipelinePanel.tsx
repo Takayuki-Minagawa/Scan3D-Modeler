@@ -27,8 +27,9 @@ const JOB_STATUS_LABEL: Record<JobRecord['status'], string> = {
  * パイプライン画面(段階データ+ジョブ管理)。
  * 中断したジョブはここから再開できる(1A-4)。
  * SfM以降の実再構成はフェーズ0検証後に実装(未実装表示)。
+ * 全体の再読込通知(refreshKey)はProjectPage側で購読している。
  */
-export function PipelinePanel(props: { projectId: string; onDataChanged: () => void }) {
+export function PipelinePanel(props: { projectId: string }) {
   const [stages, setStages] = useState<Stage[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [imageCount, setImageCount] = useState({ kept: 0, total: 0 });
@@ -46,11 +47,7 @@ export function PipelinePanel(props: { projectId: string; onDataChanged: () => v
 
   useEffect(() => {
     void reload();
-    return onJobsChanged(() => {
-      void reload();
-      props.onDataChanged();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return onJobsChanged(() => void reload());
   }, [reload]);
 
   const latestByKind = new Map<StageKind, Stage>();
@@ -156,12 +153,14 @@ export function PipelinePanel(props: { projectId: string; onDataChanged: () => v
                 {j.message && <div className="hint">{j.message}</div>}
                 {j.error && <div className="warn-box">{j.error}</div>}
                 <div className="row">
-                  {j.status === 'running' && isJobLive(j.id) && (
+                  {j.status === 'running' && (
                     <>
+                      {/* 停止要求はBroadcastChannelで他タブの実行にも届く */}
                       <button onClick={() => stopJob(j.id, 'pause')}>一時停止</button>
                       <button className="danger" onClick={() => stopJob(j.id, 'cancel')}>
                         中止
                       </button>
+                      {!isJobLive(j.id) && <span className="hint">別のタブで実行中</span>}
                     </>
                   )}
                   {j.status === 'paused' && (

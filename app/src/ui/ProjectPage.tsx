@@ -3,6 +3,7 @@ import { CapturePanel } from '../capture/CapturePanel';
 import { Gallery } from '../capture/Gallery';
 import { ImportPanel } from '../capture/ImportPanel';
 import { getProject } from '../db/projects';
+import { onJobsChanged } from '../jobs/runner';
 import { PipelinePanel } from '../pipeline/PipelinePanel';
 import type { Project } from '../types';
 import { ViewerPanel } from '../viewer/ViewerPanel';
@@ -25,6 +26,11 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
   // 撮影・ジョブ完了などでギャラリー/ビューア/出力を再読込させるためのキー
   const [refreshKey, setRefreshKey] = useState(0);
   const bump = () => setRefreshKey((k) => k + 1);
+
+  // ジョブ状態変化の購読は、常時マウントされるこの階層で行う。
+  // パイプライン画面のマウント中に限定すると、ジョブ実行中に別タブ
+  // (ビューア・出力)へ移った場合、完了しても表示が更新されないため
+  useEffect(() => onJobsChanged(() => setRefreshKey((k) => k + 1)), []);
 
   useEffect(() => {
     void getProject(props.projectId).then((p) => {
@@ -78,7 +84,7 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
       {tab === 'images' && (
         <Gallery projectId={project.id} refreshKey={refreshKey} onChanged={bump} />
       )}
-      {tab === 'pipeline' && <PipelinePanel projectId={project.id} onDataChanged={bump} />}
+      {tab === 'pipeline' && <PipelinePanel projectId={project.id} />}
       {tab === 'viewer' && <ViewerPanel projectId={project.id} refreshKey={refreshKey} />}
       {tab === 'export' && <ExportPanel project={project} refreshKey={refreshKey} />}
     </main>

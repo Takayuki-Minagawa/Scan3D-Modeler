@@ -121,13 +121,19 @@ export class ThreeView {
       }
     }
     if (!has) return;
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3()).length() || 100;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const center = sphere.center.clone();
+    const radius = Math.max(sphere.radius, 1e-3);
+    // 水平・垂直の狭い方の視野角に外接球が収まる距離を計算する。
+    // 固定係数(size×1.2)では縦長画面(スマホ縦持ち)で左右がはみ出すため
+    const fovV = THREE.MathUtils.degToRad(this.camera.fov);
+    const fovH = 2 * Math.atan(Math.tan(fovV / 2) * this.camera.aspect);
+    const dist = (radius / Math.sin(Math.min(fovV, fovH) / 2)) * 1.06; // 6%の余白
     this.controls.target.copy(center);
-    const dir = new THREE.Vector3(1, 0.7, 1).normalize().multiplyScalar(size * 1.2);
+    const dir = new THREE.Vector3(1, 0.7, 1).normalize().multiplyScalar(dist);
     this.camera.position.copy(center).add(dir);
-    this.camera.near = size / 500;
-    this.camera.far = size * 20;
+    this.camera.near = radius / 200;
+    this.camera.far = (dist + radius) * 10;
     this.camera.updateProjectionMatrix();
     // 机面グリッドをモデル底面に合わせる
     this.grid.position.set(center.x, box.min.y, center.z);
