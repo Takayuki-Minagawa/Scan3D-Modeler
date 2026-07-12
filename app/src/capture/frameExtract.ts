@@ -59,6 +59,9 @@ export async function extractFramesEngine(
       cp = { stageId: stage.id, nextMs: 0, kept: 0, scanned: 0, lastThumb: null };
       await ctx.saveCheckpoint(cp);
     }
+    // ジョブが失敗/中止で終わるときにstageをrunningのまま残さないよう関連付ける
+    // (再開時にも呼ぶ: 冪等)
+    await ctx.bindStage(cp.stageId);
 
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -72,11 +75,15 @@ export async function extractFramesEngine(
       c2d.drawImage(video, 0, 0);
       const { score, thumb } = await scoreImageData(bitmapToImageData(video));
       cp.scanned++;
+      const sharp = score >= blurThreshold;
 
-      const isDuplicate = cp.lastThumb !== null && thumbDiff(cp.lastThumb, thumb) < DEDUP_DIFF_THRESHOLD;
+      // 重複判定の基準(lastThumb)は「直前に採用した鮮明フレーム」に限定する。
+      // ブレ除外フレームを基準にすると、同じ構図でピントの合った次のフレームまで
+      // 重複扱いになって保存されず、良品フレームを失うため。
+      const isDuplicate =
+        cp.lastThumb !== null && thumbDiff(cp.lastThumb, thumb) < DEDUP_DIFF_THRESHOLD;
       if (!isDuplicate) {
         const frameBlob = await canvasToBlob(canvas, 'image/jpeg', 0.85);
-        const sharp = score >= blurThreshold;
         await addAsset({
           projectId: ctx.job.projectId,
           stageId: cp.stageId,
@@ -87,18 +94,22 @@ export async function extractFramesEngine(
           quality: { blur: Math.round(score), sharp },
           meta: { timeMs: Math.round(t), video: videoAsset.name },
         });
-        cp.kept++;
-        cp.lastThumb = thumb;
+        if (sharp) {
+          cp.kept++;
+          cp.lastThumb = thumb;
+        }
+        // ブレフレームは参考用に除外印付きで保存するだけで、
+        // 採用数にも重複判定の基準にも含めない
       }
 
       cp.nextMs = t + stepMs;
       await ctx.saveCheckpoint(cp);
       ctx.report(
         Math.min(0.999, t / durationMs),
-        `${cp.kept}枚保持 / ${cp.scanned}コマ検査(重複除外あり)`,
+        `${cp.kept}枚採用 / ${cp.scanned}コマ検査(ブレ・重複は除外)`,
       );
     }
-    await setStageStatus(cp.stageId, 'ready', { 保持枚数: cp.kept, 検査コマ数: cp.scanned });
+    await setStageStatus(cp.stageId, 'ready', { 採用枚数: cp.kept, 検査コマ数: cp.scanned });
   } finally {
     video.removeAttribute('src');
     video.load();
