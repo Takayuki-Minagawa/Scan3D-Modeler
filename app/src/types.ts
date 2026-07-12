@@ -88,6 +88,8 @@ export interface JobRecord {
   message?: string;
   params: Record<string, unknown>;
   checkpoint?: unknown;
+  /** このジョブが作成した段階データID。失敗/中止時にrunningのまま残さないための関連付け */
+  stageIds?: string[];
   error?: string;
   createdAt: number;
   updatedAt: number;
