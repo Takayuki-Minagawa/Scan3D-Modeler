@@ -5,7 +5,8 @@
  * 「タブAで実行中のジョブをタブBが再開して同じcheckpointを二重実行」できてしまう。
  * 実行中のタブはジョブごとの排他ロック `scan2fem-job-<id>` を保持し、
  * - 実行開始/再開はロックが取れた場合のみ行う
- * - 起動時整合(reconcile)はロック保持中のジョブを「生きている」とみなして触らない
+ * - 整合(reconcile)はロックを取得できたジョブのみ、保持したまま状態を
+ *   再確認して整合する(実行中タブのジョブには触らない)
  * - プロジェクト削除はロック解放待ちで他タブのエンジン停止を確認する
  * Web Locks非対応の古いブラウザでは従来動作(単一タブ想定)にフォールバックする。
  */
@@ -16,18 +17,6 @@ export const webLocksSupported: boolean =
 
 export function jobLockName(jobId: string): string {
   return PREFIX + jobId;
-}
-
-/** いずれかのタブが実行ロックを保持しているジョブIDの集合 */
-export async function heldJobLockIds(): Promise<Set<string>> {
-  if (!webLocksSupported) return new Set();
-  const state = await navigator.locks.query();
-  return new Set(
-    (state.held ?? [])
-      .map((l) => l.name ?? '')
-      .filter((n) => n.startsWith(PREFIX))
-      .map((n) => n.slice(PREFIX.length)),
-  );
 }
 
 /** ロックが取れた場合のみfnを実行する。他タブが保持中なら実行せずfalseを返す */

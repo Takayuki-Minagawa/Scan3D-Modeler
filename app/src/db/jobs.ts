@@ -1,6 +1,5 @@
 import { db, uid, now } from './db';
 import type { JobRecord, JobType } from '../types';
-import { heldJobLockIds } from '../jobs/lock';
 
 export async function createJobRecord(
   type: JobType,
@@ -20,7 +19,18 @@ export async function createJobRecord(
     createdAt: t,
     updatedAt: t,
   };
-  await (await db()).put('jobs', job);
+  // project存在確認と追加を同一トランザクションで行い、別タブでの
+  // プロジェクト削除と競合しても削除済みprojectIdを持つジョブを作らない
+  const d = await db();
+  const tx = d.transaction(['projects', 'jobs'], 'readwrite');
+  const project = await tx.objectStore('projects').get(projectId);
+  if (!project) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
+  }
+  await tx.objectStore('jobs').put(job);
+  await tx.done;
   return job;
 }
 
@@ -57,23 +67,6 @@ export async function listJobs(projectId: string): Promise<JobRecord[]> {
   return all.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/**
- * 起動時整合処理: どのタブも実行していない `running` ジョブを「一時停止」に落とす。
- * checkpointが残っているため、ユーザーはそこから再開できる(作業計画 1A-4)。
- * 実行中のタブはジョブごとのWeb Lockを保持しているため、ロック保持中のジョブは
- * 触らない(別タブを開いただけで実行中ジョブが「一時停止」表示になり、
- * そこから二重実行できてしまう問題の防止)。
- */
-export async function reconcileJobsOnStartup(): Promise<void> {
-  const d = await db();
-  const running = await d.getAllFromIndex('jobs', 'byStatus', 'running');
-  if (running.length === 0) return;
-  const held = await heldJobLockIds();
-  for (const j of running) {
-    if (held.has(j.id)) continue; // 他タブで実行中
-    await updateJob(j.id, {
-      status: 'paused',
-      message: '前回のセッションで中断されました(再開できます)',
-    });
-  }
+export async function listRunningJobs(): Promise<JobRecord[]> {
+  return (await db()).getAllFromIndex('jobs', 'byStatus', 'running');
 }
