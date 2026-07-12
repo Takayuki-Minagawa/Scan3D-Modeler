@@ -109,6 +109,25 @@ export async function importProjectZip(file: Blob): Promise<Project> {
     throw new Error('対応していない形式です');
   }
 
+  // 書き込みを始める前に、全アセットの本体データがZIP内に揃っているかを
+  // 検証する(欠落を黙って飛ばすと「成功」表示なのに表示・出力できない
+  // プロジェクトができてしまうため)
+  const broken: string[] = [];
+  for (const a of manifest.assets) {
+    const data = entries[`assets/${a.id}`];
+    if (!data) broken.push(`${a.name}(本体なし)`);
+    else if (typeof a.size === 'number' && data.byteLength !== a.size) {
+      broken.push(`${a.name}(サイズ不一致: ${data.byteLength}≠${a.size})`);
+    }
+  }
+  if (broken.length > 0) {
+    const head = broken.slice(0, 5).join('、');
+    const rest = broken.length > 5 ? ` 他${broken.length - 5}件` : '';
+    throw new Error(
+      `ZIP内のアセット本体が欠落・破損しています: ${head}${rest}。壊れたZIPの可能性があるためインポートを中止しました(何も取り込んでいません)`,
+    );
+  }
+
   const idMap = new Map<string, string>();
   const remap = (oldId: string): string => {
     let v = idMap.get(oldId);
@@ -156,16 +175,14 @@ export async function importProjectZip(file: Blob): Promise<Project> {
   for (const s of stages) puts.push(tx.objectStore('stages').put(s));
   for (const { meta, oldId } of assets) {
     puts.push(tx.objectStore('assets').put(meta));
-    const data = entries[`assets/${oldId}`];
-    if (data) {
-      const buf = new ArrayBuffer(data.byteLength);
-      new Uint8Array(buf).set(data);
-      puts.push(
-        tx
-          .objectStore('blobs')
-          .put({ assetId: meta.id, blob: new Blob([buf], { type: meta.mime }) }),
-      );
-    }
+    const data = entries[`assets/${oldId}`]; // 存在は書き込み前に検証済み
+    const buf = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buf).set(data);
+    puts.push(
+      tx
+        .objectStore('blobs')
+        .put({ assetId: meta.id, blob: new Blob([buf], { type: meta.mime }) }),
+    );
   }
   await Promise.all(puts);
   await tx.done;
