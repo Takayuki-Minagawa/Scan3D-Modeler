@@ -18,10 +18,13 @@
 ```bash
 cd app
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5173(既定でlocalhostのみ待受)
 npm run build      # 型チェック + 本番ビルド(dist/)
 npm run typecheck  # 型チェックのみ
 ```
+
+開発サーバはセキュリティ上の理由からLANへ公開しません。同一LANの実機から
+確認したい場合のみ、信頼できるネットワークで `npm run dev -- --host` を使ってください。
 
 ### Android実機での確認
 
