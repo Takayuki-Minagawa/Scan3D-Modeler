@@ -27,7 +27,15 @@ export async function addAsset(input: NewAsset): Promise<AssetMeta> {
     meta: input.meta,
     createdAt: now(),
   };
-  const tx = d.transaction(['assets', 'blobs'], 'readwrite');
+  // project存在確認と書き込みを同一トランザクションで行い、
+  // プロジェクト削除と競合しても孤児アセットを残さない
+  const tx = d.transaction(['projects', 'assets', 'blobs'], 'readwrite');
+  const project = await tx.objectStore('projects').get(input.projectId);
+  if (!project) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
+  }
   await Promise.all([
     tx.objectStore('assets').put(meta),
     tx.objectStore('blobs').put({ assetId: meta.id, blob: input.blob }),

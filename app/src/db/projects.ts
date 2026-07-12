@@ -25,13 +25,19 @@ export async function touchProject(id: string): Promise<void> {
   if (p) await d.put('projects', { ...p, updatedAt: now() });
 }
 
-/** プロジェクトと関連データ(段階・アセット・blob・ジョブ)を削除する */
+/**
+ * プロジェクトと関連データ(段階・アセット・blob・ジョブ)を削除する。
+ * 実行中ジョブの書き込みと競合しないよう、呼び出し側は事前に
+ * stopProjectJobs()(jobs/runner.ts)で全タブのジョブ停止を確定させること。
+ * 一覧の読み出しと削除を単一トランザクションで行うため、その間に追加された
+ * 行が取り残されることはない(書込み側もproject存在を検証している)。
+ */
 export async function deleteProject(id: string): Promise<void> {
   const d = await db();
-  const assetIds = (await d.getAllFromIndex('assets', 'byProject', id)).map((a) => a.id);
-  const stageIds = (await d.getAllFromIndex('stages', 'byProject', id)).map((s) => s.id);
-  const jobIds = (await d.getAllFromIndex('jobs', 'byProject', id)).map((j) => j.id);
   const tx = d.transaction(['projects', 'stages', 'assets', 'blobs', 'jobs'], 'readwrite');
+  const assetIds = (await tx.objectStore('assets').index('byProject').getAll(id)).map((a) => a.id);
+  const stageIds = (await tx.objectStore('stages').index('byProject').getAll(id)).map((s) => s.id);
+  const jobIds = (await tx.objectStore('jobs').index('byProject').getAll(id)).map((j) => j.id);
   await Promise.all([
     tx.objectStore('projects').delete(id),
     ...stageIds.map((s) => tx.objectStore('stages').delete(s)),

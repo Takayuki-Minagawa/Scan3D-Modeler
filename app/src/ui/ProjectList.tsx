@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createProject, deleteProject, listProjects } from '../db/projects';
+import { stopProjectJobs } from '../jobs/runner';
 import { importProjectZip } from '../export/zip';
 import type { CaptureMethod, Project, ScaleMethod, Unit } from '../types';
 import { CAPTURE_METHOD_LABEL, SCALE_METHOD_LABEL } from '../types';
@@ -59,7 +60,11 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
   async function remove(p: Project) {
     if (!window.confirm(`プロジェクト「${p.name}」を完全に削除しますか?(元に戻せません)`)) return;
+    setStatus('削除中…(実行中のジョブを停止しています)');
+    // 実行中ジョブを全タブで停止させてから削除する(孤児データ防止)
+    await stopProjectJobs(p.id);
     await deleteProject(p.id);
+    setStatus('');
     await reload();
   }
 

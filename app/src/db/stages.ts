@@ -9,6 +9,8 @@ export async function createStage(
   projectId: string,
   kind: StageKind,
   opts: {
+    /** 再開を冪等にしたいエンジン向けに、IDを外から確定して渡せる */
+    id?: string;
     params?: Record<string, unknown>;
     sourceStageId?: string | null;
     demo?: boolean;
@@ -16,15 +18,28 @@ export async function createStage(
   } = {},
 ): Promise<Stage> {
   const d = await db();
-  const existing = (await d.getAllFromIndex('stages', 'byProject', projectId)).filter(
-    (s) => s.kind === kind,
-  );
-  const seq = existing.reduce((m, s) => Math.max(m, s.seq), 0) + 1;
+  // project存在確認〜seq採番〜書き込みを単一トランザクションで行う:
+  // - 削除済みプロジェクトへの書き込み防止(削除処理との競合)
+  // - 並行ジョブとの採番競合防止(unique index byProjectKindSeq が安全網)
+  const tx = d.transaction(['projects', 'stages'], 'readwrite');
+  const project = await tx.objectStore('projects').get(projectId);
+  if (!project) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
+  }
+  const stages = tx.objectStore('stages');
+  const last = await stages
+    .index('byProjectKindSeq')
+    .openCursor(
+      IDBKeyRange.bound([projectId, kind, -Infinity], [projectId, kind, Infinity]),
+      'prev',
+    );
   const stage: Stage = {
-    id: uid(),
+    id: opts.id ?? uid(),
     projectId,
     kind,
-    seq,
+    seq: (last?.value.seq ?? 0) + 1,
     status: 'running',
     demo: opts.demo,
     params: opts.params,
@@ -32,7 +47,8 @@ export async function createStage(
     note: opts.note,
     createdAt: now(),
   };
-  await d.put('stages', stage);
+  await stages.put(stage);
+  await tx.done;
   return stage;
 }
 
@@ -46,9 +62,27 @@ export async function setStageStatus(
   stats?: Record<string, string | number>,
 ): Promise<void> {
   const d = await db();
-  const s = await d.get('stages', id);
-  if (!s) return;
-  await d.put('stages', { ...s, status, stats: stats ?? s.stats });
+  const tx = d.transaction('stages', 'readwrite');
+  const s = await tx.store.get(id);
+  if (s) await tx.store.put({ ...s, status, stats: stats ?? s.stats });
+  await tx.done;
+}
+
+/**
+ * stageとその成果物(assets/blobs)をまとめて削除する。
+ * ジョブ再開時に「保存途中だった作りかけ」を掃除して作り直すためのもので、
+ * 確定済み(ready)の履歴を消す用途には使わないこと(使用書§25)。
+ */
+export async function deleteStageCascade(stageId: string): Promise<void> {
+  const d = await db();
+  const tx = d.transaction(['stages', 'assets', 'blobs'], 'readwrite');
+  const assets = await tx.objectStore('assets').index('byStage').getAll(stageId);
+  await Promise.all([
+    tx.objectStore('stages').delete(stageId),
+    ...assets.map((a) => tx.objectStore('assets').delete(a.id)),
+    ...assets.map((a) => tx.objectStore('blobs').delete(a.id)),
+  ]);
+  await tx.done;
 }
 
 export async function listStages(projectId: string): Promise<Stage[]> {
