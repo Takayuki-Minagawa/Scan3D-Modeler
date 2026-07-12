@@ -33,6 +33,7 @@ export function PipelinePanel(props: { projectId: string }) {
   const [stages, setStages] = useState<Stage[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [imageCount, setImageCount] = useState({ kept: 0, total: 0 });
+  const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
     const [st, jb, imgs] = await Promise.all([
@@ -47,8 +48,11 @@ export function PipelinePanel(props: { projectId: string }) {
 
   useEffect(() => {
     void reload();
-    return onJobsChanged(() => void reload());
-  }, [reload]);
+    // 進捗バー更新のためprogress通知にも反応するが、対象は自プロジェクトのみ
+    return onJobsChanged((ev) => {
+      if (ev.projectId === null || ev.projectId === props.projectId) void reload();
+    });
+  }, [reload, props.projectId]);
 
   const latestByKind = new Map<StageKind, Stage>();
   for (const s of stages) latestByKind.set(s.kind, s);
@@ -56,12 +60,18 @@ export function PipelinePanel(props: { projectId: string }) {
   const hasActiveJob = jobs.some((j) => j.status === 'running' || j.status === 'paused');
 
   async function runDemo() {
-    await startJob(
-      'demoReconstruct',
-      props.projectId,
-      'デモ再構成(合成データ: 穴付きL型ブラケット)',
-      { ...DEMO_DEFAULT_PARAMS },
-    );
+    setError('');
+    try {
+      await startJob(
+        'demoReconstruct',
+        props.projectId,
+        'デモ再構成(合成データ: 穴付きL型ブラケット)',
+        { ...DEMO_DEFAULT_PARAMS },
+      );
+    } catch (e) {
+      // 別タブでプロジェクトが削除された直後など
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   return (
@@ -74,6 +84,7 @@ export function PipelinePanel(props: { projectId: string }) {
           </button>
         }
       >
+        {error && <p className="warn-box">{error}</p>}
         <div className="stage-flow">
           <div className="stage-card">
             <div className="stage-name">画像セット</div>

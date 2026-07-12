@@ -29,8 +29,19 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
 
   // ジョブ状態変化の購読は、常時マウントされるこの階層で行う。
   // パイプライン画面のマウント中に限定すると、ジョブ実行中に別タブ
-  // (ビューア・出力)へ移った場合、完了しても表示が更新されないため
-  useEffect(() => onJobsChanged(() => setRefreshKey((k) => k + 1)), []);
+  // (ビューア・出力)へ移った場合、完了しても表示が更新されないため。
+  // refreshKeyの更新はビューア/ギャラリーのBlob再読込を伴うので、
+  // 「このプロジェクトの・データ変化(change)」の通知だけに反応する
+  // (全タブ・全プロジェクトの進捗通知ごとに再読込するとjank/OOM要因になる)
+  useEffect(
+    () =>
+      onJobsChanged((ev) => {
+        if (ev.kind === 'change' && (ev.projectId === null || ev.projectId === props.projectId)) {
+          setRefreshKey((k) => k + 1);
+        }
+      }),
+    [props.projectId],
+  );
 
   useEffect(() => {
     void getProject(props.projectId).then((p) => {
@@ -78,7 +89,7 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
       {tab === 'capture' && (
         <>
           <CapturePanel projectId={project.id} onCaptured={bump} />
-          <ImportPanel projectId={project.id} onImported={bump} />
+          <ImportPanel projectId={project.id} refreshKey={refreshKey} onImported={bump} />
         </>
       )}
       {tab === 'images' && (

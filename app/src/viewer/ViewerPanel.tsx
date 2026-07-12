@@ -20,6 +20,9 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
   const [showPoints, setShowPoints] = useState(true);
   const [showMesh, setShowMesh] = useState(true);
   const [loading, setLoading] = useState(true);
+  // 再読込(refreshKey更新)でgeometryを作り直した直後に現在の表示ON/OFFを
+  // 再適用するための参照(新規作成されたPoints/Meshは既定でvisibleのため)
+  const visRef = useRef({ points: true, mesh: true });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -68,6 +71,10 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
       }
 
       if (alive) {
+        // 作り直したgeometryへ現在のチェックボックス状態を再適用する
+        // (これがないと点群OFF中の再読込で点群が勝手に再表示される)
+        view.setVisibility('points', visRef.current.points);
+        view.setVisibility('mesh', visRef.current.mesh);
         view.fit();
         setLoading(false);
       }
@@ -77,8 +84,14 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
     };
   }, [props.projectId, props.refreshKey]);
 
-  useEffect(() => viewRef.current?.setVisibility('points', showPoints), [showPoints]);
-  useEffect(() => viewRef.current?.setVisibility('mesh', showMesh), [showMesh]);
+  useEffect(() => {
+    visRef.current.points = showPoints;
+    viewRef.current?.setVisibility('points', showPoints);
+  }, [showPoints]);
+  useEffect(() => {
+    visRef.current.mesh = showMesh;
+    viewRef.current?.setVisibility('mesh', showMesh);
+  }, [showMesh]);
 
   const isDemo = cloud?.stage?.demo || mesh?.stage?.demo;
 
