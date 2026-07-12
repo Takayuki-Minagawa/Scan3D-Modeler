@@ -1,6 +1,7 @@
 import { ActiveJobExistsError } from '../db/jobs';
 import { DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
 import { startJob } from '../jobs/runner';
+import { jobText } from '../jobs/text';
 
 /**
  * 同一動画のactive抽出はcreateJobRecordの単一IndexedDB transactionで拒否される。
@@ -12,7 +13,7 @@ export async function startFrameExtraction(
   name: string,
 ): Promise<boolean> {
   try {
-    await startJob('extractFrames', projectId, `フレーム抽出: ${name}`, {
+    await startJob('extractFrames', projectId, jobText('title.extractFrames', { name }), {
       videoAssetId,
       stepMs: 250,
       blurThreshold: DEFAULT_BLUR_THRESHOLD,

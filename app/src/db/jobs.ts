@@ -1,5 +1,6 @@
 import { db, uid, now } from './db';
-import type { JobRecord, JobStatus, JobStopMode, JobType } from '../types';
+import { formatJobText, jobText } from '../jobs/text';
+import type { JobRecord, JobStatus, JobStopMode, JobText, JobType } from '../types';
 
 export class ActiveJobExistsError extends Error {
   constructor(message: string) {
@@ -12,13 +13,19 @@ function strongerStop(a: JobStopMode | undefined, b: JobStopMode): JobStopMode {
   return a === 'cancel' || b === 'cancel' ? 'cancel' : 'pause';
 }
 
+function messageFields(text: JobText): Pick<JobRecord, 'message' | 'messageText'> {
+  return { message: formatJobText(text, 'ja'), messageText: text };
+}
+
 function stoppedJob(j: JobRecord, mode: JobStopMode): JobRecord {
+  const text = jobText(mode === 'pause' ? 'message.paused' : 'message.canceled');
   return {
     ...j,
     status: mode === 'pause' ? 'paused' : 'canceled',
     stopRequested: undefined,
     error: undefined,
-    message: mode === 'pause' ? '一時停止中(再開できます)' : '中止しました',
+    errorText: undefined,
+    ...messageFields(text),
     updatedAt: now(),
   };
 }
@@ -26,7 +33,7 @@ function stoppedJob(j: JobRecord, mode: JobStopMode): JobRecord {
 export async function createJobRecord(
   type: JobType,
   projectId: string,
-  title: string,
+  titleText: JobText,
   params: Record<string, unknown>,
   runToken: string,
 ): Promise<JobRecord> {
@@ -35,7 +42,8 @@ export async function createJobRecord(
     id: uid(),
     projectId,
     type,
-    title,
+    title: formatJobText(titleText, 'ja'),
+    titleText,
     status: 'running',
     runToken,
     progress: 0,
@@ -94,7 +102,7 @@ export async function claimJobRun(
   jobId: string,
   runToken: string,
   expect: JobStatus[],
-  message?: string,
+  messageText?: JobText,
 ): Promise<JobRecord | null> {
   const d = await db();
   const tx = d.transaction('jobs', 'readwrite');
@@ -107,7 +115,8 @@ export async function claimJobRun(
       runToken,
       stopRequested: undefined,
       error: undefined,
-      ...(message ? { message } : null),
+      errorText: undefined,
+      ...(messageText ? messageFields(messageText) : null),
       updatedAt: now(),
     };
     await tx.store.put(claimed);
@@ -166,7 +175,7 @@ export async function requestJobStop(
     requested = {
       ...j,
       stopRequested,
-      message: stopRequested === 'cancel' ? '中止しています…' : '一時停止しています…',
+      ...messageFields(jobText(stopRequested === 'cancel' ? 'message.canceling' : 'message.pausing')),
       updatedAt: now(),
     };
     await tx.store.put(requested);
@@ -177,7 +186,7 @@ export async function requestJobStop(
 
 export type JobRunOutcome =
   | { kind: 'done' }
-  | { kind: 'failed'; error: string }
+  | { kind: 'failed'; error: JobText }
   | { kind: 'stopped'; mode: JobStopMode };
 
 export interface JobRunFinalization {
@@ -215,8 +224,9 @@ export async function finalizeJobRun(
         ...j,
         status: 'done',
         progress: 1,
-        message: '完了',
+        ...messageFields(jobText('message.completed')),
         error: undefined,
+        errorText: undefined,
         stopRequested: undefined,
         updatedAt: now(),
       };
@@ -225,7 +235,8 @@ export async function finalizeJobRun(
       next = {
         ...j,
         status: 'failed',
-        error: outcome.error,
+        error: formatJobText(outcome.error, 'ja'),
+        errorText: outcome.error,
         stopRequested: undefined,
         updatedAt: now(),
       };
@@ -257,7 +268,7 @@ export async function reconcileOrphanedJob(jobId: string): Promise<JobRecord | n
       : {
           ...j,
           status: 'paused',
-          message: '実行が中断されました(続きから再開できます)',
+          ...messageFields(jobText('message.interrupted')),
           updatedAt: now(),
         };
     await tx.store.put(reconciled);
@@ -287,7 +298,10 @@ export async function updateJobForRun(
     };
     // 停止要求後も最後のcheckpoint/progressは保存するが、UIの
     // 「一時停止/中止しています…」を通常進捗messageで上書きしない。
-    if (j.stopRequested) next.message = j.message;
+    if (j.stopRequested) {
+      next.message = j.message;
+      next.messageText = j.messageText;
+    }
     await tx.store.put(next);
   }
   await tx.done;

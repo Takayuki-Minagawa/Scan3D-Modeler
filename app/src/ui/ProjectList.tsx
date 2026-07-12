@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createProject, deleteProject, listProjects } from '../db/projects';
+import { localizeError } from '../errorText';
 import { stopProjectJobs } from '../jobs/runner';
 import { importProjectZip } from '../export/zip';
 import type { CaptureMethod, Project, ScaleMethod, Unit } from '../types';
-import { CAPTURE_METHOD_LABEL, SCALE_METHOD_LABEL } from '../types';
+import { useI18n } from '../i18n';
 import { Section } from './common';
 import { fmtDateTime } from './misc';
+import { AppControls } from './AppControls';
+
+type LocalizedMessage = { ja: string; en: string };
 
 /** トップ画面: プロジェクト一覧+新規作成(使用書§7)+ZIPインポート */
 export function ProjectList(props: { onOpen: (id: string) => void }) {
+  const { language, tr } = useI18n();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState('');
@@ -22,6 +27,18 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
   const [d, setD] = useState('100');
   const [captureMethod, setCaptureMethod] = useState<CaptureMethod>('video');
   const [scaleMethod, setScaleMethod] = useState<ScaleMethod>('twoPoint');
+
+  const captureMethodLabels: Record<CaptureMethod, string> = {
+    video: tr('動画', 'Video'),
+    photos: tr('静止画', 'Photos'),
+    mixed: tr('動画+静止画', 'Video + photos'),
+  };
+  const scaleMethodLabels: Record<ScaleMethod, string> = {
+    marker: tr('寸法既知マーカー', 'Known-size marker'),
+    knownDimension: tr('対象物上の既知寸法', 'Known dimension on object'),
+    twoPoint: tr('2点間の実測寸法を後で入力', 'Enter a measured two-point distance later'),
+    later: tr('後で設定', 'Set later'),
+  };
 
   async function reload() {
     setProjects(await listProjects());
@@ -46,25 +63,41 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
   async function handleImport(file: File | null) {
     if (!file) return;
-    setStatus('インポート中…');
+    setStatus({ ja: 'インポート中…', en: 'Importing…' });
     try {
       const p = await importProjectZip(file);
-      setStatus(`インポートしました: ${p.name}`);
+      setStatus({ ja: `インポートしました: ${p.name}`, en: `Imported: ${p.name}` });
       await reload();
     } catch (e) {
-      setStatus(`インポート失敗: ${e instanceof Error ? e.message : String(e)}`);
+      const reason = localizeError(e);
+      setStatus({
+        ja: `インポート失敗: ${reason.ja}`,
+        en: `Import failed: ${reason.en}`,
+      });
     } finally {
       if (importRef.current) importRef.current.value = '';
     }
   }
 
   async function remove(p: Project) {
-    if (!window.confirm(`プロジェクト「${p.name}」を完全に削除しますか?(元に戻せません)`)) return;
-    setStatus('削除中…(実行中のジョブを停止しています)');
+    if (
+      !window.confirm(
+        tr(
+          `プロジェクト「${p.name}」を完全に削除しますか?(元に戻せません)`,
+          `Permanently delete project “${p.name}”? This cannot be undone.`,
+        ),
+      )
+    ) {
+      return;
+    }
+    setStatus({
+      ja: '削除中…(実行中のジョブを停止しています)',
+      en: 'Deleting… (stopping active jobs)',
+    });
     // 実行中ジョブを全タブで停止させてから削除する(孤児データ防止)
     await stopProjectJobs(p.id);
     await deleteProject(p.id);
-    setStatus('');
+    setStatus(null);
     await reload();
   }
 
@@ -72,16 +105,21 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
   return (
     <main className="container">
-      <header className="app-head">
-        <h1>Scan2FEM</h1>
-        <p className="hint">
-          小型対象物の撮影画像から3D形状を再構成し、FEM用メッシュデータを作成する静的Webアプリ
-          (すべての処理は端末内で完結し、サーバへ送信されません)
-        </p>
+      <header className="app-head app-head-with-controls">
+        <div>
+          <h1>Scan2FEM</h1>
+          <p className="hint">
+            {tr(
+              '小型対象物の撮影画像から3D形状を再構成し、FEM用メッシュデータを作成する静的Webアプリ(すべての処理は端末内で完結し、サーバへ送信されません)',
+              'A static web app for organizing captures and exploring a workflow toward FEM-ready data. Processing stays in this browser; no project data is uploaded by this app.',
+            )}
+          </p>
+        </div>
+        <AppControls />
       </header>
 
       <Section
-        title="プロジェクト"
+        title={tr('プロジェクト', 'Projects')}
         aside={
           <div className="row">
             <input
@@ -91,37 +129,37 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
               className="hidden"
               onChange={(e) => void handleImport(e.target.files?.[0] ?? null)}
             />
-            <button onClick={() => importRef.current?.click()}>ZIPインポート</button>
+            <button onClick={() => importRef.current?.click()}>{tr('ZIPインポート', 'Import ZIP')}</button>
             <button className="primary" onClick={() => setShowForm((v) => !v)}>
-              新規プロジェクト
+              {tr('新規プロジェクト', 'New project')}
             </button>
           </div>
         }
       >
-        {status && <p className="hint">{status}</p>}
+        {status && <p className="hint">{tr(status.ja, status.en)}</p>}
         {showForm && (
           <form className="form" onSubmit={(e) => void submit(e)}>
             <label>
-              プロジェクト名 *
+              {tr('プロジェクト名 *', 'Project name *')}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={`例: L型ブラケット_${today}_TEST01`}
+                placeholder={tr(`例: L型ブラケット_${today}_TEST01`, `Example: L-bracket_${today}_TEST01`)}
                 required
               />
             </label>
             <label>
-              対象物名称 *
+              {tr('対象物名称 *', 'Object name *')}
               <input
                 value={objectName}
                 onChange={(e) => setObjectName(e.target.value)}
-                placeholder="例: L型ブラケット"
+                placeholder={tr('例: L型ブラケット', 'Example: L-bracket')}
                 required
               />
             </label>
             <div className="form-row">
               <label>
-                単位
+                {tr('単位', 'Unit')}
                 <select value={unit} onChange={(e) => setUnit(e.target.value as Unit)}>
                   <option value="mm">mm</option>
                   <option value="cm">cm</option>
@@ -129,26 +167,26 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
                 </select>
               </label>
               <label>
-                幅
+                {tr('幅', 'Width')}
                 <input type="number" value={w} onChange={(e) => setW(e.target.value)} min="0" />
               </label>
               <label>
-                高さ
+                {tr('高さ', 'Height')}
                 <input type="number" value={h} onChange={(e) => setH(e.target.value)} min="0" />
               </label>
               <label>
-                奥行き
+                {tr('奥行き', 'Depth')}
                 <input type="number" value={d} onChange={(e) => setD(e.target.value)} min="0" />
               </label>
             </div>
             <div className="form-row">
               <label>
-                撮影方法
+                {tr('撮影方法', 'Capture method')}
                 <select
                   value={captureMethod}
                   onChange={(e) => setCaptureMethod(e.target.value as CaptureMethod)}
                 >
-                  {Object.entries(CAPTURE_METHOD_LABEL).map(([v, l]) => (
+                  {Object.entries(captureMethodLabels).map(([v, l]) => (
                     <option key={v} value={v}>
                       {l}
                     </option>
@@ -156,12 +194,12 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
                 </select>
               </label>
               <label>
-                スケール設定
+                {tr('スケール設定', 'Scale setting')}
                 <select
                   value={scaleMethod}
                   onChange={(e) => setScaleMethod(e.target.value as ScaleMethod)}
                 >
-                  {Object.entries(SCALE_METHOD_LABEL).map(([v, l]) => (
+                  {Object.entries(scaleMethodLabels).map(([v, l]) => (
                     <option key={v} value={v}>
                       {l}
                     </option>
@@ -171,10 +209,10 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
             </div>
             <div className="row">
               <button type="submit" className="primary">
-                プロジェクトを作成
+                {tr('プロジェクトを作成', 'Create project')}
               </button>
               <button type="button" onClick={() => setShowForm(false)}>
-                キャンセル
+                {tr('キャンセル', 'Cancel')}
               </button>
             </div>
           </form>
@@ -182,27 +220,34 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
         {projects.length === 0 && !showForm ? (
           <p className="hint">
-            プロジェクトがまだありません。「新規プロジェクト」から作成してください。
+            {tr(
+              'プロジェクトがまだありません。「新規プロジェクト」から作成してください。',
+              'No projects yet. Create one with New project.',
+            )}
           </p>
         ) : (
           <ul className="project-list">
             {projects.map((p) => (
-              <li key={p.id} className="project-item" onClick={() => props.onOpen(p.id)}>
-                <div>
-                  <strong>{p.name}</strong>
-                  <div className="hint">
-                    {p.objectName} ・ 約{p.approxSize.w}×{p.approxSize.h}×{p.approxSize.d}
-                    {p.unit} ・ 更新 {fmtDateTime(p.updatedAt)}
-                  </div>
-                </div>
+              <li key={p.id} className="project-item">
                 <button
-                  className="mini danger"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void remove(p);
-                  }}
+                  type="button"
+                  className="project-open"
+                  onClick={() => props.onOpen(p.id)}
+                  aria-label={tr(`プロジェクト「${p.name}」を開く`, `Open project “${p.name}”`)}
                 >
-                  削除
+                  <strong>{p.name}</strong>
+                  <span className="hint">
+                    {p.objectName} ・ {tr('約', 'Approx. ')}
+                    {p.approxSize.w}×{p.approxSize.h}×{p.approxSize.d}
+                    {p.unit} ・ {tr('更新 ', 'Updated ')}{fmtDateTime(p.updatedAt, language)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="mini danger"
+                  onClick={() => void remove(p)}
+                >
+                  {tr('削除', 'Delete')}
                 </button>
               </li>
             ))}
@@ -211,8 +256,10 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
       </Section>
 
       <footer className="hint center">
-        本アプリが生成する形状は撮影時に見えた表面形状です。内部構造・板厚などは画像から判定できません
-        (使用書§1)。解析結果のみでの安全性判断は行わないでください(使用書§35)。
+        {tr(
+          '本アプリが生成する形状は撮影時に見えた表面形状です。内部構造・板厚などは画像から判定できません。解析結果のみでの安全性判断は行わないでください。',
+          'The app can only represent surfaces visible in captures; it cannot infer internal structure or thickness. Do not make safety decisions from these results alone.',
+        )}
       </footer>
     </main>
   );

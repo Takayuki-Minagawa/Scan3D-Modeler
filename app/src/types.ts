@@ -75,6 +75,41 @@ export type JobStatus = 'running' | 'paused' | 'done' | 'failed' | 'canceled';
 export type JobStopMode = 'pause' | 'cancel';
 
 /**
+ * Persisted UI text for a job.  Store a stable key and interpolation values rather than a
+ * sentence in the language active at execution time, so a later language switch can rerender
+ * the same job correctly.  The legacy string fields on JobRecord remain for old user data.
+ */
+export type JobTextKey =
+  | 'title.extractFrames'
+  | 'title.scoreImages'
+  | 'title.demoReconstruct'
+  | 'message.resumed'
+  | 'message.runningInAnotherTab'
+  | 'message.pausing'
+  | 'message.canceling'
+  | 'message.paused'
+  | 'message.canceled'
+  | 'message.completed'
+  | 'message.interrupted'
+  | 'message.frameProgress'
+  | 'message.scoreProgress'
+  | 'message.demoCloudProgress'
+  | 'message.demoSurface'
+  | 'error.engineNotRegistered'
+  | 'error.videoNotFound'
+  | 'error.videoDurationUnavailable'
+  | 'error.canvasUnavailable'
+  | 'error.videoLoadTimeout'
+  | 'error.videoUnsupported'
+  | 'error.demoWorker'
+  | 'error.unexpected';
+
+export interface JobText {
+  key: JobTextKey;
+  values?: Record<string, string | number>;
+}
+
+/**
  * ジョブ実行記録。checkpoint を IndexedDB に永続化することで、
  * タブを閉じた後・リロード後でも途中から再開できる(作業計画 1A-4)。
  */
@@ -82,7 +117,10 @@ export interface JobRecord {
   id: string;
   projectId: string;
   type: JobType;
+  /** Japanese fallback retained for compatibility with records written before JobText existed. */
   title: string;
+  /** Language-neutral title descriptor for new records. */
+  titleText?: JobText;
   status: JobStatus;
   /**
    * 実行権の識別子。開始/再開のたびに新しい値で条件付き更新(claim)され、
@@ -97,12 +135,16 @@ export interface JobRecord {
   stopRequested?: JobStopMode;
   /** 0..1 */
   progress: number;
+  /** Legacy Japanese fallback. New records use messageText for language switching. */
   message?: string;
+  messageText?: JobText;
   params: Record<string, unknown>;
   checkpoint?: unknown;
   /** このジョブが作成した段階データID。失敗/中止時にrunningのまま残さないための関連付け */
   stageIds?: string[];
+  /** Legacy Japanese fallback. New records use errorText for language switching. */
   error?: string;
+  errorText?: JobText;
   createdAt: number;
   updatedAt: number;
 }

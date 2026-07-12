@@ -3,6 +3,7 @@ import { uid } from '../db/db';
 import { createStage, deleteStageCascade, getStage, setStageStatus } from '../db/stages';
 import { encodeMeshBinary } from '../export/formats';
 import { throwIfStopped, type JobContext } from '../jobs/runner';
+import { JobTextError, jobText } from '../jobs/text';
 import { makeDemoLMesh } from './demoMesh';
 
 /**
@@ -48,7 +49,11 @@ function requestChunk(worker: Worker, chunk: number, n: number, seed: number): P
       }
     };
     worker.addEventListener('message', onMessage);
-    worker.addEventListener('error', (e) => reject(new Error(e.message)), { once: true });
+    worker.addEventListener(
+      'error',
+      () => reject(new JobTextError(jobText('error.demoWorker'))),
+      { once: true },
+    );
     worker.postMessage({ type: 'gen', chunk, n, seed });
   });
 }
@@ -85,7 +90,10 @@ export async function demoReconstructEngine(
         await sleep(150);
         cp.nextChunk = c + 1;
         await ctx.saveCheckpoint({ ...cp });
-        ctx.report((c + 1) / (chunks + 1), `点群生成 ${c + 1}/${chunks} チャンク(デモ)`);
+        ctx.report(
+          (c + 1) / (chunks + 1),
+          jobText('message.demoCloudProgress', { chunk: c + 1, total: chunks }),
+        );
       }
 
       // 点群を1つのアセットに結合して保存(内部形式: 生のFloat32 xyz列)
@@ -126,7 +134,7 @@ export async function demoReconstructEngine(
 
   // --- デモサーフェス(L字押し出し)。同様に冪等 ---
   if (!(await stageIsReady(cp.surfaceStageId))) {
-    ctx.report(0.98, 'デモサーフェス生成中');
+    ctx.report(0.98, jobText('message.demoSurface'));
     const mesh = makeDemoLMesh();
     cp.surfaceStageId ??= uid();
     await ctx.saveCheckpoint({ ...cp });

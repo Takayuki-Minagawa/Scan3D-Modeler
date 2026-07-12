@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addAsset } from '../db/assets';
+import { localizeError } from '../errorText';
 import { DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
+import { useI18n } from '../i18n';
 import { Section } from '../ui/common';
 import { timestampName } from '../ui/misc';
 import { saveStillFromVideo } from './imageUtil';
 import { startFrameExtraction } from './startFrameExtraction';
+
+type LocalizedMessage = { ja: string; en: string };
 
 /**
  * カメラ撮影UI(1B-1)。
@@ -12,6 +16,7 @@ import { startFrameExtraction } from './startFrameExtraction';
  * enumerateDevices のカメラ選択で同列に扱う(作業計画 前提P4)。
  */
 export function CapturePanel(props: { projectId: string; onCaptured: () => void }) {
+  const { tr } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -27,8 +32,8 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   const [recState, setRecState] = useState<'idle' | 'recording' | 'saving'>('idle');
   // stopCameraなどのstable callbackからも、直前に同期更新した状態を参照する。
   const recStateRef = useRef<'idle' | 'recording' | 'saving'>('idle');
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
+  const [status, setStatus] = useState<LocalizedMessage | null>(null);
+  const [error, setError] = useState<LocalizedMessage | null>(null);
 
   const supported = !!navigator.mediaDevices?.getUserMedia;
 
@@ -58,7 +63,11 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
         rec.stop();
       } catch (e) {
         releaseRecorder(rec);
-        setError(`録画を停止できません: ${e instanceof Error ? e.message : String(e)}`);
+        const reason = localizeError(e);
+        setError({
+          ja: `録画を停止できません: ${reason.ja}`,
+          en: `Could not stop recording: ${reason.en}`,
+        });
       }
     } else if (recStateRef.current !== 'saving') {
       // start失敗等でonstopが来ないinactive recorderを門番として残さない。
@@ -80,7 +89,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   useEffect(() => stopCamera, [stopCamera]);
 
   async function startCamera(id?: string) {
-    setError('');
+    setError(null);
     stopCamera();
     const gen = ++streamSeq.current;
     setStarting(true);
@@ -110,7 +119,10 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
       if (settings.deviceId) setDeviceId(settings.deviceId);
       setActive(true);
       setStarting(false);
-      setStatus(`カメラ起動中: ${track.label || '(名称不明)'}`);
+      setStatus({
+        ja: `カメラ起動中: ${track.label || '(名称不明)'}`,
+        en: `Camera is active: ${track.label || '(unnamed)'}`,
+      });
     } catch (e) {
       if (gen !== streamSeq.current) return;
       // 起動途中の失敗(video.play・デバイス列挙など)ではstreamを保持した
@@ -121,10 +133,15 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
       if (videoRef.current) videoRef.current.srcObject = null;
       setActive(false);
       setStarting(false);
-      setError(
-        `カメラを起動できません: ${e instanceof Error ? e.message : String(e)}。` +
+      const reason = localizeError(e);
+      setError({
+        ja:
+          `カメラを起動できません: ${reason.ja}。` +
           'HTTPSまたはlocalhostでのみカメラを使用できます。ファイル取込も利用できます。',
-      );
+        en:
+          `Could not start camera: ${reason.en}. ` +
+          'Camera access requires HTTPS or localhost. You can also use file import.',
+      });
     }
   }
 
@@ -137,14 +154,23 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
         props.projectId,
         `photo_${timestampName()}.jpg`,
       );
-      setStatus(
-        `撮影しました: ${asset.name}(鮮鋭度 ${Math.round(blur.score)}${
-          blur.score < DEFAULT_BLUR_THRESHOLD ? ' — ブレの可能性あり' : ''
+      const sharpness = Math.round(blur.score);
+      const mayBeBlurry = blur.score < DEFAULT_BLUR_THRESHOLD;
+      setStatus({
+        ja: `撮影しました: ${asset.name}(鮮鋭度 ${sharpness}${
+          mayBeBlurry ? ' — ブレの可能性あり' : ''
         })`,
-      );
+        en: `Photo captured: ${asset.name} (sharpness ${sharpness}${
+          mayBeBlurry ? ' — may be blurry' : ''
+        })`,
+      });
       props.onCaptured();
     } catch (e) {
-      setStatus(`撮影画像を保存できませんでした: ${e instanceof Error ? e.message : String(e)}`);
+      const reason = localizeError(e);
+      setStatus({
+        ja: `撮影画像を保存できませんでした: ${reason.ja}`,
+        en: `Could not save captured photo: ${reason.en}`,
+      });
     }
   }
 
@@ -152,7 +178,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
     const stream = streamRef.current;
     // 前回録画の保存(onstop)完了までは開始しない(recorderRefが門番)
     if (!stream || recStateRef.current !== 'idle' || recorderRef.current) return;
-    setError('');
+    setError(null);
     let rec: MediaRecorder | null = null;
     try {
       const candidates = [
@@ -176,7 +202,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
           const ext = type.includes('mp4') ? 'mp4' : 'webm';
           const blob = new Blob(chunks, { type });
           if (blob.size === 0) {
-            setStatus('録画データが空でした');
+            setStatus({ ja: '録画データが空でした', en: 'The recording is empty.' });
             return;
           }
           const asset = await addAsset({
@@ -186,29 +212,47 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
             blob,
             meta: { source: 'camera' },
           });
-          setStatus(`録画を保存しました: ${asset.name}`);
+          setStatus({
+            ja: `録画を保存しました: ${asset.name}`,
+            en: `Recording saved: ${asset.name}`,
+          });
           props.onCaptured();
           if (
-            window.confirm('録画からキーフレーム抽出を開始しますか?(後からでも実行できます)')
+            window.confirm(
+              tr(
+                '録画からキーフレーム抽出を開始しますか?(後からでも実行できます)',
+                'Start keyframe extraction from this recording? (You can do this later.)',
+              ),
+            )
           ) {
             try {
               const started = await startFrameExtraction(props.projectId, asset.id, asset.name);
               setStatus(
                 started
-                  ? 'フレーム抽出を開始しました(パイプラインタブで進捗を確認できます)'
-                  : 'この動画のフレーム抽出はすでに実行中または一時停止中です',
+                  ? {
+                      ja: 'フレーム抽出を開始しました(パイプラインタブで進捗を確認できます)',
+                      en: 'Keyframe extraction started (check progress in the Pipeline tab).',
+                    }
+                  : {
+                      ja: 'この動画のフレーム抽出はすでに実行中または一時停止中です',
+                      en: 'Keyframe extraction for this video is already running or paused.',
+                    },
               );
             } catch (e) {
               // 動画本体の保存は成功済み。抽出開始だけの失敗として区別する。
-              setStatus(
-                `録画は保存しましたが、フレーム抽出を開始できません: ${
-                  e instanceof Error ? e.message : String(e)
-                }`,
-              );
+              const reason = localizeError(e);
+              setStatus({
+                ja: `録画は保存しましたが、フレーム抽出を開始できません: ${reason.ja}`,
+                en: `The recording was saved, but keyframe extraction could not start: ${reason.en}`,
+              });
             }
           }
         } catch (e) {
-          setStatus(`録画の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+          const reason = localizeError(e);
+          setStatus({
+            ja: `録画の保存に失敗しました: ${reason.ja}`,
+            en: `Could not save recording: ${reason.en}`,
+          });
         } finally {
           // onstopはこのrecorderに対応する保存が完了した時点でのみ門番を外す。
           releaseRecorder(createdRecorder);
@@ -233,7 +277,11 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
         recorderRef.current = null;
         updateRecState('idle');
       }
-      setError(`録画を開始できません: ${e instanceof Error ? e.message : String(e)}`);
+      const reason = localizeError(e);
+      setError({
+        ja: `録画を開始できません: ${reason.ja}`,
+        en: `Could not start recording: ${reason.en}`,
+      });
     }
   }
 
@@ -242,14 +290,21 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   }
 
   return (
-    <Section title="カメラ撮影(スマホ / USBカメラ / 内蔵カメラ)">
+    <Section
+      title={tr(
+        'カメラ撮影(スマホ / USBカメラ / 内蔵カメラ)',
+        'Camera capture (phone / USB camera / built-in camera)',
+      )}
+    >
       {!supported && (
         <p className="warn-box">
-          この環境ではカメラAPIを利用できません(HTTPSまたはlocalhostが必要です)。
-          下の「ファイル取込」から画像・動画を追加してください。
+          {tr(
+            'この環境ではカメラAPIを利用できません(HTTPSまたはlocalhostが必要です)。下の「ファイル取込」から画像・動画を追加してください。',
+            'Camera access is unavailable in this environment (HTTPS or localhost is required). Add images or videos using File import below.',
+          )}
         </p>
       )}
-      {error && <p className="warn-box">{error}</p>}
+      {error && <p className="warn-box">{tr(error.ja, error.en)}</p>}
       <div className="row wrap">
         {!active ? (
           <button
@@ -257,10 +312,12 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
             disabled={!supported || starting}
             onClick={() => void startCamera()}
           >
-            {starting ? 'カメラ起動中…' : 'カメラを起動'}
+            {starting
+              ? tr('カメラ起動中…', 'Starting camera…')
+              : tr('カメラを起動', 'Start camera')}
           </button>
         ) : (
-          <button onClick={stopCamera}>カメラを停止</button>
+          <button onClick={stopCamera}>{tr('カメラを停止', 'Stop camera')}</button>
         )}
         {devices.length > 0 && (
           <select
@@ -272,7 +329,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
           >
             {devices.map((d, i) => (
               <option key={d.deviceId || i} value={d.deviceId}>
-                {d.label || `カメラ ${i + 1}`}
+                {d.label || tr(`カメラ ${i + 1}`, `Camera ${i + 1}`)}
               </option>
             ))}
           </select>
@@ -280,27 +337,34 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
       </div>
       <div className="camera-wrap">
         <video ref={videoRef} playsInline muted className={active ? '' : 'hidden'} />
-        {recState === 'recording' && <span className="rec-dot">● REC</span>}
+        {recState === 'recording' && (
+          <span className="rec-dot">{tr('● 録画中', '● REC')}</span>
+        )}
       </div>
       {active && (
         <div className="row wrap">
           <button className="primary" onClick={() => void takePhoto()}>
-            静止画を撮影
+            {tr('静止画を撮影', 'Capture photo')}
           </button>
           {recState === 'recording' ? (
             <button className="danger" onClick={stopRecording}>
-              録画終了
+              {tr('録画終了', 'Stop recording')}
             </button>
           ) : (
             <button onClick={startRecording} disabled={recState !== 'idle'}>
-              {recState === 'saving' ? '録画を保存中…' : '録画開始'}
+              {recState === 'saving'
+                ? tr('録画を保存中…', 'Saving recording…')
+                : tr('録画開始', 'Start recording')}
             </button>
           )}
         </div>
       )}
-      {status && <p className="hint">{status}</p>}
+      {status && <p className="hint">{tr(status.ja, status.en)}</p>}
       <p className="hint">
-        撮影のコツ: 対象物の周囲を「中間高さ→上方→(必要なら)下方」の順に一定距離でゆっくり周回します(使用書§8)。
+        {tr(
+          '撮影のコツ: 対象物の周囲を「中間高さ→上方→(必要なら)下方」の順に一定距離でゆっくり周回します(使用書§8)。',
+          'Capture tip: Move slowly around the object at a consistent distance, from mid-height to above and, if needed, below.',
+        )}
       </p>
     </Section>
   );

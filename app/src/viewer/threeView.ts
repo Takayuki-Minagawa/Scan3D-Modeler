@@ -1,6 +1,51 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
+type ViewerTheme = 'light' | 'dark';
+
+/**
+ * Canvas は CSS の色変数を直接参照できないため、アプリの data-theme と同じ
+ * タイミングで Three.js 側の配色も切り替える。ライト配色では背景より十分濃い
+ * 点群・サーフェス・グリッドを使い、形状の輪郭が消えないようにしている。
+ */
+const VIEWER_PALETTE: Record<
+  ViewerTheme,
+  {
+    background: THREE.ColorRepresentation;
+    point: THREE.ColorRepresentation;
+    mesh: THREE.ColorRepresentation;
+    gridCenter: THREE.ColorRepresentation;
+    grid: THREE.ColorRepresentation;
+    hemisphereSky: THREE.ColorRepresentation;
+    hemisphereGround: THREE.ColorRepresentation;
+    hemisphereIntensity: number;
+    directionalIntensity: number;
+  }
+> = {
+  dark: {
+    background: 0x0b0f14,
+    point: 0x4cc2ff,
+    mesh: 0x93a8bd,
+    gridCenter: 0x3a4a5f,
+    grid: 0x232d3a,
+    hemisphereSky: 0xdfe8ff,
+    hemisphereGround: 0x2a2f38,
+    hemisphereIntensity: 1.1,
+    directionalIntensity: 1.4,
+  },
+  light: {
+    background: 0xe5ebf3,
+    point: 0x006fa8,
+    mesh: 0x3f6482,
+    gridCenter: 0x6d8195,
+    grid: 0xb5c2ce,
+    hemisphereSky: 0xffffff,
+    hemisphereGround: 0x91a2b1,
+    hemisphereIntensity: 1.35,
+    directionalIntensity: 1.65,
+  },
+};
+
 /**
  * 3Dビューア(作業計画 1D)。Three.js + OrbitControls。
  * OrbitControlsはタッチ操作(1本指回転・2本指ズーム/パン)に対応しており、
@@ -11,11 +56,15 @@ export class ThreeView {
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
+  private hemisphereLight: THREE.HemisphereLight;
+  private directionalLight: THREE.DirectionalLight;
   private points: THREE.Points | null = null;
   private mesh: THREE.Mesh | null = null;
   private grid: THREE.GridHelper;
   private raf = 0;
   private resizeObserver: ResizeObserver;
+  private themeObserver: MutationObserver | null = null;
+  private theme: ViewerTheme;
 
   constructor(private container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -29,10 +78,11 @@ export class ThreeView {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.12;
 
-    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x2a2f38, 1.1));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.4);
-    dir.position.set(80, 140, 60);
-    this.scene.add(dir);
+    this.hemisphereLight = new THREE.HemisphereLight(0xdfe8ff, 0x2a2f38, 1.1);
+    this.scene.add(this.hemisphereLight);
+    this.directionalLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    this.directionalLight.position.set(80, 140, 60);
+    this.scene.add(this.directionalLight);
 
     this.grid = new THREE.GridHelper(200, 20, 0x3a4a5f, 0x232d3a);
     this.scene.add(this.grid);
@@ -43,12 +93,63 @@ export class ThreeView {
     this.resizeObserver.observe(container);
     this.resize();
 
+    this.theme = this.readTheme();
+    this.setTheme(this.theme);
+    // ThemeProvider writes the resolved value to <html data-theme="…">. Keeping
+    // the observer in this renderer avoids coupling this non-React class to a
+    // particular component and also covers a theme switch while this tab is open.
+    this.themeObserver = new MutationObserver(() => this.setTheme(this.readTheme()));
+    this.themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     };
     loop();
+  }
+
+  private readTheme(): ViewerTheme {
+    const dataTheme = document.documentElement.dataset.theme;
+    if (dataTheme === 'light' || dataTheme === 'dark') return dataTheme;
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+
+  /** data-theme の変更、または呼び出し元からの明示指定で描画配色を更新する。 */
+  setTheme(theme: ViewerTheme = this.readTheme()): void {
+    this.theme = theme;
+    const palette = VIEWER_PALETTE[theme];
+    this.renderer.setClearColor(palette.background, 1);
+    if (!this.scene.background) this.scene.background = new THREE.Color(palette.background);
+    else (this.scene.background as THREE.Color).set(palette.background);
+
+    this.hemisphereLight.color.set(palette.hemisphereSky);
+    this.hemisphereLight.groundColor.set(palette.hemisphereGround);
+    this.hemisphereLight.intensity = palette.hemisphereIntensity;
+    this.directionalLight.intensity = palette.directionalIntensity;
+    this.replaceGrid(palette);
+
+    const pointMaterial = this.points?.material;
+    if (pointMaterial instanceof THREE.PointsMaterial) pointMaterial.color.set(palette.point);
+    const meshMaterial = this.mesh?.material;
+    if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.set(palette.mesh);
+  }
+
+  /** r169 の GridHelper は色のsetterを公開していないため、位置を保って差し替える。 */
+  private replaceGrid(palette: (typeof VIEWER_PALETTE)[ViewerTheme]): void {
+    const position = this.grid.position.clone();
+    this.scene.remove(this.grid);
+    this.grid.geometry.dispose();
+    const material = this.grid.material;
+    if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+    else material.dispose();
+
+    this.grid = new THREE.GridHelper(200, 20, palette.gridCenter, palette.grid);
+    this.grid.position.copy(position);
+    this.scene.add(this.grid);
   }
 
   private resize(): void {
@@ -72,7 +173,7 @@ export class ThreeView {
       geo.computeBoundingSphere();
       const radius = geo.boundingSphere?.radius ?? 50;
       const mat = new THREE.PointsMaterial({
-        color: 0x4cc2ff,
+        color: VIEWER_PALETTE[this.theme].point,
         size: Math.max(0.05, radius * 0.006),
         sizeAttenuation: true,
       });
@@ -94,7 +195,7 @@ export class ThreeView {
       geo.setIndex(new THREE.BufferAttribute(indices, 1));
       geo.computeVertexNormals();
       const mat = new THREE.MeshStandardMaterial({
-        color: 0x93a8bd,
+        color: VIEWER_PALETTE[this.theme].mesh,
         flatShading: true,
         side: THREE.DoubleSide,
         metalness: 0.1,
@@ -142,8 +243,15 @@ export class ThreeView {
   dispose(): void {
     cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
+    this.themeObserver?.disconnect();
+    this.themeObserver = null;
     this.setPointCloud(null);
     this.setMesh(null);
+    this.scene.remove(this.grid);
+    this.grid.geometry.dispose();
+    const gridMaterial = this.grid.material;
+    if (Array.isArray(gridMaterial)) gridMaterial.forEach((entry) => entry.dispose());
+    else gridMaterial.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

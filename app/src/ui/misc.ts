@@ -5,10 +5,15 @@ export function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-export function fmtDateTime(t: number): string {
-  const d = new Date(t);
-  const p = (v: number) => String(v).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+export function fmtDateTime(t: number, language: 'ja' | 'en' = 'ja'): string {
+  return new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-GB', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(t));
 }
 
 export function timestampName(): string {

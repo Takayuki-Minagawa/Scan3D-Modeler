@@ -13,7 +13,8 @@ import {
   updateJobForRun,
 } from '../db/jobs';
 import { getStage, setStageStatus } from '../db/stages';
-import type { JobRecord, JobStopMode, JobType } from '../types';
+import { errorToJobText, formatJobText, jobText } from './text';
+import type { JobRecord, JobStopMode, JobText, JobType } from '../types';
 import { tryRunWithJobLock, waitJobLockReleased } from './lock';
 
 /**
@@ -36,7 +37,8 @@ export interface JobContext<P = Record<string, unknown>, C = unknown> {
   /** 再開時は前回保存したチェックポイント。初回は undefined */
   checkpoint: C | undefined;
   signal: AbortSignal;
-  report: (progress: number, message?: string) => void;
+  /** Progress text is persisted as a language-neutral descriptor. */
+  report: (progress: number, message?: JobText) => void;
   saveCheckpoint: (cp: C) => Promise<void>;
   /**
    * エンジンが作成したstageをジョブに関連付ける。失敗/中止で終わったとき、
@@ -126,11 +128,11 @@ function emit(ev: JobsChangedEvent): void {
 export async function startJob(
   type: JobType,
   projectId: string,
-  title: string,
+  titleText: JobText,
   params: Record<string, unknown>,
 ): Promise<string> {
   const runToken = uid();
-  const job = await createJobRecord(type, projectId, title, params, runToken);
+  const job = await createJobRecord(type, projectId, titleText, params, runToken);
   void run(job.id, runToken);
   return job.id;
 }
@@ -140,7 +142,7 @@ export async function resumeJob(jobId: string): Promise<void> {
   // paused のときだけ running + 新しいrunToken へ条件付きで遷移(claim)する。
   // 二重resume(連打・別タブ)では先勝ちで、負けた呼び出しはnullを受け取り
   // 実行に進まないため、terminalジョブの再実行やstatusの巻き戻しが起きない
-  const claimed = await claimJobRun(jobId, uid(), ['paused'], '再開しました');
+  const claimed = await claimJobRun(jobId, uid(), ['paused'], jobText('message.resumed'));
   if (!claimed) return;
   emit({ projectId: claimed.projectId, kind: 'change' });
   void run(jobId, claimed.runToken!);
@@ -282,7 +284,11 @@ async function run(jobId: string, runToken: string): Promise<void> {
   }
   // 他タブがロック保持中 = 実行中。二重実行はしない
   const j = await getJob(jobId);
-  const changed = await updateJobForRun(jobId, runToken, { message: '別のタブで実行中です' });
+  const messageText = jobText('message.runningInAnotherTab');
+  const changed = await updateJobForRun(jobId, runToken, {
+    message: formatJobText(messageText, 'ja'),
+    messageText,
+  });
   if (changed) emit({ projectId: j?.projectId ?? null, kind: 'change' });
 }
 
@@ -306,7 +312,7 @@ async function execute(jobId: string, runToken: string): Promise<void> {
   if (!engine) {
     await finalizeJobRun(jobId, runToken, {
       kind: 'failed',
-      error: `エンジン未登録: ${job.type}`,
+      error: jobText('error.engineNotRegistered', { type: job.type }),
     });
     emit({ projectId: job.projectId, kind: 'change' });
     return;
@@ -319,12 +325,17 @@ async function execute(jobId: string, runToken: string): Promise<void> {
     params: job.params,
     checkpoint: job.checkpoint,
     signal: ac.signal,
-    report: (progress, message) => {
+    report: (progress, messageText) => {
       const t = Date.now();
       // 書き込み頻度を抑えつつ進捗を永続化する
       if (t - lastPersist > 300) {
         lastPersist = t;
-        void updateJobForRun(jobId, runToken, { progress, message }).then((changed) => {
+        void updateJobForRun(jobId, runToken, {
+          progress,
+          ...(messageText
+            ? { message: formatJobText(messageText, 'ja'), messageText }
+            : null),
+        }).then((changed) => {
           if (changed) emit({ projectId: job.projectId, kind: 'progress' });
         });
       }
@@ -358,7 +369,7 @@ async function execute(jobId: string, runToken: string): Promise<void> {
     } else {
       const finalized = await finalizeJobRun(jobId, runToken, {
         kind: 'failed',
-        error: e instanceof Error ? e.message : String(e),
+        error: errorToJobText(e),
       });
       if (finalized?.outcome === 'canceled') {
         await failBoundStages(jobId, 'ジョブ中止により未完了');

@@ -2,6 +2,7 @@ import { addAsset, getAsset, getAssetBlob, listAssets, updateAsset } from '../db
 import { createStage, setStageStatus } from '../db/stages';
 import { scoreImageData, thumbDiff, DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
 import { throwIfStopped, type JobContext } from '../jobs/runner';
+import { JobTextError, jobText } from '../jobs/text';
 import { blobToImageData, bitmapToImageData, canvasToBlob } from './imageUtil';
 
 /**
@@ -37,7 +38,7 @@ export async function extractFramesEngine(
   const { videoAssetId, stepMs, blurThreshold } = ctx.params;
   const videoAsset = await getAsset(videoAssetId);
   const blob = await getAssetBlob(videoAssetId);
-  if (!videoAsset || !blob) throw new Error('動画データが見つかりません');
+  if (!videoAsset || !blob) throw new JobTextError(jobText('error.videoNotFound'));
 
   const video = document.createElement('video');
   video.muted = true;
@@ -48,7 +49,7 @@ export async function extractFramesEngine(
     video.src = url;
     await waitEvent(video, 'loadedmetadata', 15000);
     const durationMs = (await realDurationSec(video)) * 1000;
-    if (!(durationMs > 0)) throw new Error('動画の長さを取得できません');
+    if (!(durationMs > 0)) throw new JobTextError(jobText('error.videoDurationUnavailable'));
 
     // 再開時は既存stage、初回は新規stage(履歴として追加)
     let cp: ExtractCheckpoint;
@@ -77,7 +78,7 @@ export async function extractFramesEngine(
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const c2d = canvas.getContext('2d');
-    if (!c2d) throw new Error('canvas 2Dコンテキストを取得できません');
+    if (!c2d) throw new JobTextError(jobText('error.canvasUnavailable'));
 
     for (let t = cp.nextMs; t <= durationMs; t += stepMs) {
       throwIfStopped(ctx.signal);
@@ -127,7 +128,7 @@ export async function extractFramesEngine(
       await ctx.saveCheckpoint(cp);
       ctx.report(
         Math.min(0.999, t / durationMs),
-        `${cp.kept}枚採用 / ${cp.scanned}コマ検査(ブレ・重複は除外)`,
+        jobText('message.frameProgress', { kept: cp.kept, scanned: cp.scanned }),
       );
     }
     // 停止契約: 最終フレーム保存中に届いた停止要求もready確定前に観測する
@@ -162,7 +163,7 @@ export async function scoreImagesEngine(ctx: JobContext): Promise<void> {
       });
     }
     done++;
-    ctx.report(done / images.length, `${done}/${images.length} 枚を判定`);
+    ctx.report(done / images.length, jobText('message.scoreProgress', { done, total: images.length }));
   }
 }
 
@@ -170,7 +171,7 @@ function waitEvent(el: HTMLMediaElement, name: string, timeoutMs: number): Promi
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`動画の読み込みがタイムアウトしました(${name})`));
+      reject(new JobTextError(jobText('error.videoLoadTimeout', { event: name })));
     }, timeoutMs);
     const ok = () => {
       cleanup();
@@ -178,7 +179,7 @@ function waitEvent(el: HTMLMediaElement, name: string, timeoutMs: number): Promi
     };
     const err = () => {
       cleanup();
-      reject(new Error('動画を読み込めません(未対応の形式の可能性)'));
+      reject(new JobTextError(jobText('error.videoUnsupported')));
     };
     const cleanup = () => {
       clearTimeout(timer);

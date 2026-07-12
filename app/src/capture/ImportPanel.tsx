@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { addAsset, listAssets } from '../db/assets';
 import { listJobs } from '../db/jobs';
+import { localizeError } from '../errorText';
+import { useI18n } from '../i18n';
 import { onJobsChanged, startJob } from '../jobs/runner';
+import { jobText } from '../jobs/text';
 import type { AssetMeta } from '../types';
 import { Section } from '../ui/common';
 import { startFrameExtraction } from './startFrameExtraction';
 
 type ActiveExtractStatus = 'running' | 'paused';
+type LocalizedMessage = { ja: string; en: string };
 
 function isActiveExtractStatus(status: string): status is ActiveExtractStatus {
   return status === 'running' || status === 'paused';
@@ -35,9 +39,10 @@ export function ImportPanel(props: {
   refreshKey: number;
   onImported: () => void;
 }) {
+  const { tr } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<LocalizedMessage | null>(null);
   const [videos, setVideos] = useState<AssetMeta[]>([]);
   const [activeExtractJobs, setActiveExtractJobs] = useState<
     Record<string, ActiveExtractStatus>
@@ -74,7 +79,11 @@ export function ImportPanel(props: {
         if (alive) setActiveExtractJobs(active);
       } catch (e) {
         if (alive) {
-          setStatus(`抽出ジョブを確認できません: ${e instanceof Error ? e.message : String(e)}`);
+          const reason = localizeError(e);
+          setStatus({
+            ja: `抽出ジョブを確認できません: ${reason.ja}`,
+            en: `Could not check extraction jobs: ${reason.en}`,
+          });
         }
       }
     };
@@ -101,11 +110,21 @@ export function ImportPanel(props: {
       setActiveExtractJobs(await loadActiveExtractJobs(props.projectId));
       setStatus(
         started
-          ? `「${v.name}」のフレーム抽出を開始しました(パイプラインタブで進捗を確認できます)`
-          : `「${v.name}」のフレーム抽出はすでに実行中または一時停止中です`,
+          ? {
+              ja: `「${v.name}」のフレーム抽出を開始しました(パイプラインタブで進捗を確認できます)`,
+              en: `Keyframe extraction started for “${v.name}” (check progress in the Pipeline tab).`,
+            }
+          : {
+              ja: `「${v.name}」のフレーム抽出はすでに実行中または一時停止中です`,
+              en: `Keyframe extraction for “${v.name}” is already running or paused.`,
+            },
       );
     } catch (e) {
-      setStatus(`フレーム抽出を開始できません: ${e instanceof Error ? e.message : String(e)}`);
+      const reason = localizeError(e);
+      setStatus({
+        ja: `フレーム抽出を開始できません: ${reason.ja}`,
+        en: `Could not start keyframe extraction: ${reason.en}`,
+      });
     } finally {
       setVideoStarting(v.id, false);
     }
@@ -138,15 +157,30 @@ export function ImportPanel(props: {
           videos.push({ id: asset.id, name: asset.name });
         }
       }
-      setStatus(`取込完了: 画像${images}枚 / 動画${videos.length}本`);
+      setStatus({
+        ja: `取込完了: 画像${images}枚 / 動画${videos.length}本`,
+        en: `Import complete: ${images} image(s) / ${videos.length} video(s)`,
+      });
       props.onImported();
 
       if (images > 0) {
         // 取込画像の画質(ブレ)判定をバックグラウンドで実行
-        await startJob('scoreImages', props.projectId, `画質判定(${images}枚)`, {});
+        await startJob(
+          'scoreImages',
+          props.projectId,
+          jobText('title.scoreImages', { count: images }),
+          {},
+        );
       }
       for (const v of videos) {
-        if (window.confirm(`動画「${v.name}」からキーフレーム抽出を開始しますか?`)) {
+        if (
+          window.confirm(
+            tr(
+              `動画「${v.name}」からキーフレーム抽出を開始しますか?`,
+              `Start keyframe extraction from “${v.name}”?`,
+            ),
+          )
+        ) {
           setVideoStarting(v.id, true);
           try {
             await startFrameExtraction(props.projectId, v.id, v.name);
@@ -157,7 +191,11 @@ export function ImportPanel(props: {
       }
     } catch (e) {
       // 別タブでプロジェクトが削除された直後など
-      setStatus(`取込に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+      const reason = localizeError(e);
+      setStatus({
+        ja: `取込に失敗しました: ${reason.ja}`,
+        en: `Import failed: ${reason.en}`,
+      });
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -165,7 +203,9 @@ export function ImportPanel(props: {
   }
 
   return (
-    <Section title="ファイル取込(静止画一括 / 動画)">
+    <Section
+      title={tr('ファイル取込(静止画一括 / 動画)', 'File import (still images / videos)')}
+    >
       <div className="row wrap">
         <input
           ref={inputRef}
@@ -173,14 +213,20 @@ export function ImportPanel(props: {
           accept="image/*,video/*"
           multiple
           disabled={busy}
+          aria-label={tr('取り込む画像・動画を選択', 'Choose images or videos to import')}
           onChange={(e) => void handleFiles(e.target.files)}
         />
-        {busy && <span className="hint">取込中…</span>}
+        {busy && <span className="hint">{tr('取込中…', 'Importing…')}</span>}
       </div>
-      {status && <p className="hint">{status}</p>}
+      {status && <p className="hint">{tr(status.ja, status.en)}</p>}
       {videos.length > 0 && (
         <div>
-          <p className="hint">保存済みの動画(後からでもフレーム抽出を実行できます):</p>
+          <p className="hint">
+            {tr(
+              '保存済みの動画(後からでもフレーム抽出を実行できます):',
+              'Saved videos (you can extract frames later):',
+            )}
+          </p>
           <ul className="job-list">
             {videos.map((v) => (
               <li key={v.id} className="job-item">
@@ -193,12 +239,12 @@ export function ImportPanel(props: {
                     disabled={startingVideoIds.has(v.id) || !!activeExtractJobs[v.id]}
                   >
                     {startingVideoIds.has(v.id)
-                      ? '開始中…'
+                      ? tr('開始中…', 'Starting…')
                       : activeExtractJobs[v.id] === 'running'
-                        ? '抽出中'
+                        ? tr('抽出中', 'Extracting')
                         : activeExtractJobs[v.id] === 'paused'
-                          ? '一時停止中'
-                          : 'フレーム抽出'}
+                          ? tr('一時停止中', 'Paused')
+                          : tr('フレーム抽出', 'Extract frames')}
                   </button>
                 </div>
               </li>
@@ -207,7 +253,10 @@ export function ImportPanel(props: {
         </div>
       )}
       <p className="hint">
-        取り込んだ画像は自動でブレ判定されます。動画はキーフレーム抽出(中断・再開可能)にかけられます。
+        {tr(
+          '取り込んだ画像は自動でブレ判定されます。動画はキーフレーム抽出(中断・再開可能)にかけられます。',
+          'Imported images are checked for blur automatically. Videos can be processed for keyframe extraction (pause and resume supported).',
+        )}
       </p>
     </Section>
   );

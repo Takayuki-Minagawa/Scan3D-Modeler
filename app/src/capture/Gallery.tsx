@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { deleteAsset, getAssetBlob, listAssets, updateAsset } from '../db/assets';
+import { useI18n } from '../i18n';
 import type { AssetMeta } from '../types';
 import { Badge, Section } from '../ui/common';
 
@@ -10,6 +11,7 @@ type Filter = 'all' | 'kept' | 'excluded';
  * ブレスコア表示・採用/除外の切り替え・一括除外を行う。
  */
 export function Gallery(props: { projectId: string; refreshKey: number; onChanged: () => void }) {
+  const { tr } = useI18n();
   const [assets, setAssets] = useState<AssetMeta[]>([]);
   const [urls, setUrls] = useState<Map<string, string>>(new Map());
   const [filter, setFilter] = useState<Filter>('all');
@@ -64,7 +66,16 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
   }
 
   async function remove(a: AssetMeta) {
-    if (!window.confirm(`「${a.name}」を削除しますか?(元に戻せません)`)) return;
+    if (
+      !window.confirm(
+        tr(
+          `「${a.name}」を削除しますか?(元に戻せません)`,
+          `Delete “${a.name}”? This cannot be undone.`,
+        ),
+      )
+    ) {
+      return;
+    }
     await deleteAsset(a.id);
     setAssets((prev) => prev.filter((x) => x.id !== a.id));
     props.onChanged();
@@ -72,21 +83,29 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
 
   return (
     <Section
-      title={`画像セット(採用 ${keptCount} / 全 ${assets.length}枚)`}
+      title={tr(
+        `画像セット(採用 ${keptCount} / 全 ${assets.length}枚)`,
+        `Image set (kept ${keptCount} / ${assets.length} total)`,
+      )}
       aside={
         <div className="row">
           <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
-            <option value="all">すべて</option>
-            <option value="kept">採用のみ</option>
-            <option value="excluded">除外のみ</option>
+            <option value="all">{tr('すべて', 'All')}</option>
+            <option value="kept">{tr('採用のみ', 'Kept')}</option>
+            <option value="excluded">{tr('除外のみ', 'Excluded')}</option>
           </select>
-          <button onClick={() => void excludeBlurry()}>ブレ画像を一括除外</button>
+          <button onClick={() => void excludeBlurry()}>
+            {tr('ブレ画像を一括除外', 'Exclude blurry images')}
+          </button>
         </div>
       }
     >
       {assets.length === 0 ? (
         <p className="hint">
-          画像がまだありません。「取込」タブでカメラ撮影またはファイル取込を行ってください。
+          {tr(
+            '画像がまだありません。「取込」タブでカメラ撮影またはファイル取込を行ってください。',
+            'No images yet. Use the Import tab to capture images with a camera or import files.',
+          )}
         </p>
       ) : (
         <div className="gallery">
@@ -94,22 +113,36 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
             <figure
               key={a.id}
               className={`shot ${a.excluded ? 'excluded' : ''}`}
-              onClick={() => void toggle(a)}
-              title={`${a.name}(クリックで採用/除外を切替)`}
             >
-              {urls.get(a.id) ? (
-                <img src={urls.get(a.id)} alt={a.name} loading="lazy" />
-              ) : (
-                <div className="shot-loading">…</div>
-              )}
+              <button
+                type="button"
+                className="shot-toggle"
+                onClick={() => void toggle(a)}
+                aria-label={tr(
+                  a.excluded ? `「${a.name}」を採用に戻す` : `「${a.name}」を除外する`,
+                  a.excluded ? `Mark “${a.name}” as kept` : `Exclude “${a.name}”`,
+                )}
+                title={tr(
+                  `${a.name}(採用/除外を切替)`,
+                  `${a.name} (toggle kept/excluded)`,
+                )}
+              >
+                {urls.get(a.id) ? (
+                  <img src={urls.get(a.id)} alt={a.name} loading="lazy" />
+                ) : (
+                  <div className="shot-loading">…</div>
+                )}
+              </button>
               <figcaption>
                 {a.kind === 'frame' ? 'F' : 'P'}
                 {a.quality?.blur !== undefined && (
                   <Badge tone={a.quality.sharp ? 'ok' : 'warn'}>{a.quality.blur}</Badge>
                 )}
-                {a.excluded && <Badge tone="err">除外</Badge>}
+                {a.excluded && <Badge tone="err">{tr('除外', 'Excluded')}</Badge>}
                 <button
                   className="mini danger"
+                  aria-label={tr(`「${a.name}」を削除`, `Delete “${a.name}”`)}
+                  title={tr(`「${a.name}」を削除`, `Delete “${a.name}”`)}
                   onClick={(e) => {
                     e.stopPropagation();
                     void remove(a);
@@ -123,7 +156,10 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         </div>
       )}
       <p className="hint">
-        数値はブレ判定スコア(ラプラシアン分散。大きいほど鮮明)。P=撮影/取込画像、F=動画からの抽出フレーム。
+        {tr(
+          '数値はブレ判定スコア(ラプラシアン分散。大きいほど鮮明)。P=撮影/取込画像、F=動画からの抽出フレーム。',
+          'Numbers are blur-detection scores (Laplacian variance; higher is sharper). P = captured/imported image, F = frame extracted from a video.',
+        )}
       </p>
     </Section>
   );

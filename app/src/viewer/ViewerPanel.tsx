@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { getAssetBlob, listAssets } from '../db/assets';
 import { getStage } from '../db/stages';
+import { localizeError } from '../errorText';
 import { decodeMeshBinary } from '../export/formats';
+import { useI18n } from '../i18n';
 import type { AssetMeta, Stage } from '../types';
 import { Badge, Section } from '../ui/common';
 import { ThreeView } from './threeView';
@@ -13,6 +15,7 @@ interface Loaded {
 
 /** 3Dビューア(1D)。最新の点群・サーフェスを表示する */
 export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
+  const { tr } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<ThreeView | null>(null);
   const [cloud, setCloud] = useState<Loaded | null>(null);
@@ -20,7 +23,7 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
   const [showPoints, setShowPoints] = useState(true);
   const [showMesh, setShowMesh] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ ja: string; en: string } | null>(null);
   // 再読込(refreshKey更新)でgeometryを作り直した直後に現在の表示ON/OFFを
   // 再適用するための参照(新規作成されたPoints/Meshは既定でvisibleのため)
   const visRef = useRef({ points: true, mesh: true });
@@ -39,7 +42,7 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
     let alive = true;
     (async () => {
       setLoading(true);
-      setError('');
+      setError(null);
       const view = viewRef.current;
       if (!view) return;
       try {
@@ -96,7 +99,7 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
         view.setMesh(null);
         setCloud(null);
         setMesh(null);
-        setError(`3Dデータを読み込めません: ${e instanceof Error ? e.message : String(e)}`);
+        setError(localizeError(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -119,17 +122,17 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
 
   return (
     <Section
-      title="3Dビューア"
+      title={tr('3Dビューア', '3D viewer')}
       aside={
         <div className="row">
-          {isDemo && <Badge tone="demo">デモデータ(合成)</Badge>}
+          {isDemo && <Badge tone="demo">{tr('デモデータ(合成)', 'Demo data (synthetic)')}</Badge>}
           <label className="check">
             <input
               type="checkbox"
               checked={showPoints}
               onChange={(e) => setShowPoints(e.target.checked)}
             />
-            点群
+            {tr('点群', 'Point cloud')}
           </label>
           <label className="check">
             <input
@@ -137,26 +140,37 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
               checked={showMesh}
               onChange={(e) => setShowMesh(e.target.checked)}
             />
-            サーフェス
+            {tr('サーフェス', 'Surface')}
           </label>
-          <button onClick={() => viewRef.current?.fit()}>フィット</button>
+          <button onClick={() => viewRef.current?.fit()}>{tr('フィット', 'Fit view')}</button>
         </div>
       }
     >
-      {error && <p className="warn-box">{error}</p>}
+      {error && (
+        <p className="warn-box">
+          {tr('3Dデータを読み込めません: ', 'Could not load 3D data: ')}
+          {tr(error.ja, error.en)}
+        </p>
+      )}
       <div className="viewer" ref={containerRef}>
         {!loading && !cloud && !mesh && (
           <div className="viewer-empty">
-            表示できる3Dデータがまだありません。
+            {tr('表示できる3Dデータがまだありません。', 'No 3D data is available to display yet.')}
             <br />
-            「パイプライン」タブでデモ生成を実行するか、再構成(実装予定)を行ってください。
+            {tr(
+              '「パイプライン」タブでデモ生成を実行するか、再構成(実装予定)を行ってください。',
+              'Run Generate demo in Pipeline, or use reconstruction when it becomes available.',
+            )}
           </div>
         )}
       </div>
       <div className="hint">
-        ドラッグ/1本指: 回転 ・ ホイール/2本指ピンチ: ズーム ・ 右ドラッグ/2本指ドラッグ: 移動
-        {cloud && ` | 点群: ${String(cloud.asset.meta?.count ?? '-')}点`}
-        {mesh && ` | サーフェス: ${String(mesh.asset.meta?.triangles ?? '-')}三角形`}
+        {tr(
+          'ドラッグ/1本指: 回転 ・ ホイール/2本指ピンチ: ズーム ・ 右ドラッグ/2本指ドラッグ: 移動',
+          'Drag / one finger: rotate · wheel / two-finger pinch: zoom · right drag / two-finger drag: pan',
+        )}
+        {cloud && tr(` | 点群: ${String(cloud.asset.meta?.count ?? '-')}点`, ` | Point cloud: ${String(cloud.asset.meta?.count ?? '-')} points`)}
+        {mesh && tr(` | サーフェス: ${String(mesh.asset.meta?.triangles ?? '-')}三角形`, ` | Surface: ${String(mesh.asset.meta?.triangles ?? '-')} triangles`)}
       </div>
     </Section>
   );
