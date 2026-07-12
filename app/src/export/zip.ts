@@ -24,6 +24,25 @@ interface Manifest {
   assets: AssetMeta[];
 }
 
+/** 旧v1 ZIPが含み得る重複seqを、kindごとの昇順を保って一意化する。 */
+export function normalizeImportedStageSequences(stages: Stage[]): void {
+  const byKind = new Map<string, Stage[]>();
+  for (const s of stages) {
+    const g = byKind.get(s.kind);
+    if (g) g.push(s);
+    else byKind.set(s.kind, [s]);
+  }
+  for (const g of byKind.values()) {
+    // ES2019以降のstable sortにより、seq/createdAt同値はmanifest記載順を保つ。
+    g.sort((a, b) => a.seq - b.seq || a.createdAt - b.createdAt);
+    let last = 0;
+    for (const s of g) {
+      if (s.seq <= last) s.seq = last + 1;
+      last = s.seq;
+    }
+  }
+}
+
 export interface ExportZipResult {
   blob: Blob;
   /** 実行中(未完了)のため除外した段階数 */
@@ -159,6 +178,12 @@ export async function importProjectZip(file: Blob): Promise<Project> {
         }
       : null),
   }));
+  // 旧v1実装が出力したZIPには同一(kind, seq)の段階が含まれ得る。そのまま
+  // 書き込むとv2の一意index(byProjectKindSeq)に違反してトランザクション
+  // 全体がabortし、バックアップを復元できなくなるため、ローカルDB移行
+  // (db.ts)と同じ規則でkindごとに再採番する(sortは安定なので同値は
+  // マニフェスト記載順を保つ)
+  normalizeImportedStageSequences(stages);
   const assets: Array<{ meta: AssetMeta; oldId: string }> = manifest.assets.map((a) => ({
     oldId: a.id,
     meta: {
@@ -169,22 +194,26 @@ export async function importProjectZip(file: Blob): Promise<Project> {
     },
   }));
 
+  // ArrayBuffer/Blob生成はtransaction開始前に完了させる。大容量データの
+  // allocationが同期throwしても、DB書込みを1件もqueueしていないため
+  // 部分プロジェクトも未処理のrequest rejectionも残らない。
+  const preparedAssets = assets.map(({ meta, oldId }) => {
+    const data = entries[`assets/${oldId}`]; // 存在・サイズは上で検証済み
+    const buf = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buf).set(data);
+    return { meta, blob: new Blob([buf], { type: meta.mime }) };
+  });
+
   const d = await db();
   const tx = d.transaction(['projects', 'stages', 'assets', 'blobs'], 'readwrite');
   const puts: Promise<unknown>[] = [tx.objectStore('projects').put(project)];
   for (const s of stages) puts.push(tx.objectStore('stages').put(s));
-  for (const { meta, oldId } of assets) {
+  for (const { meta, blob } of preparedAssets) {
     puts.push(tx.objectStore('assets').put(meta));
-    const data = entries[`assets/${oldId}`]; // 存在は書き込み前に検証済み
-    const buf = new ArrayBuffer(data.byteLength);
-    new Uint8Array(buf).set(data);
-    puts.push(
-      tx
-        .objectStore('blobs')
-        .put({ assetId: meta.id, blob: new Blob([buf], { type: meta.mime }) }),
-    );
+    puts.push(tx.objectStore('blobs').put({ assetId: meta.id, blob }));
   }
-  await Promise.all(puts);
-  await tx.done;
+  // requestとtx.doneの両方へ同時にreject handlerを登録し、ConstraintError等で
+  // transactionがabortしても未処理rejectionを残さない。
+  await Promise.all([...puts, tx.done]);
   return project;
 }

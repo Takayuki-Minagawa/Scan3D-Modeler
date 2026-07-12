@@ -167,8 +167,13 @@ export function PipelinePanel(props: { projectId: string }) {
                   {j.status === 'running' && (
                     <>
                       {/* 停止要求はBroadcastChannelで他タブの実行にも届く */}
-                      <button onClick={() => stopJob(j.id, 'pause')}>一時停止</button>
-                      <button className="danger" onClick={() => stopJob(j.id, 'cancel')}>
+                      <button onClick={() => void stopJob(j.id, 'pause', j.runToken)}>
+                        一時停止
+                      </button>
+                      <button
+                        className="danger"
+                        onClick={() => void stopJob(j.id, 'cancel', j.runToken)}
+                      >
                         中止
                       </button>
                       {!isJobLive(j.id) && <span className="hint">別のタブで実行中</span>}

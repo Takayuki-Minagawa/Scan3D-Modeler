@@ -3,13 +3,13 @@
 **このファイルは開発の中断・再開のための引き継ぎ台帳です。**
 作業を再開するときは、①このファイル ②[Webアプリ構築_作業計画.md](Webアプリ構築_作業計画.md) ③`git log` の3つを読めば状況を把握できます。作業を進めたら必ずこのファイルを更新してください。
 
-最終更新: 2026-07-12(セッション2: PR #1 レビュー対応・再レビュー対応)
+最終更新: 2026-07-12(セッション3: PR #1 再レビュー3巡目対応)
 
 ---
 
 ## 現在地
 
-**フェーズ1(基盤+パイプライン貫通)を実装中。PR #1 のレビュー指摘は2巡目(P1×3, P2×9+残課題3)まで対応済み。**
+**フェーズ1(基盤+パイプライン貫通)を実装中。PR #1 のレビュー指摘は3巡目(P1×1, P2×8, P3×1)まで対応済み。**
 アプリ骨格・ジョブ再開基盤・画像取込・デモパイプライン・ビューア・出力までが動作確認済み。
 実再構成(SfM/MVS/Poisson/TetGen のWASM化)は**フェーズ0検証が未着手**のため、スタブ+合成デモで代替中。
 
@@ -116,13 +116,38 @@ npm run build                          # 型チェック+本番ビルド
 - **updateAsset並行更新**(除外×画質を同時書込)→両方生存(lost updateなし)
 - コンソールエラーなし(2タブとも)、`npm run build` 成功
 
+## PR #1 再レビュー対応(2026-07-12, 3巡目: P1×1, P2×8, P3×1)
+
+| 指摘 | 対応 |
+|---|---|
+| 旧v1 ZIPの重複seqをv2へ復元できない(P1) | import時にもkindごとにseqを再採番。payload/BlobはDB transaction前に準備 |
+| Web Lock解放後にterminalジョブを逐次再実行(P2) | runTokenを開始/再開ごとにclaimし、lock取得後も同token・非terminalを単一txnで確認 |
+| Controller登録前/完了確定中の停止要求が消失(P2) | stopRequestedをrunToken付きでDBへ永続化。done/failed/paused/canceledを単一txnで仲裁しcancelを優先 |
+| focus/visibilityのreconcile間引きで孤立runningを取りこぼす(P2) | wakeイベント時点からの期限を保持し、実行中/間引き中の要求をtrailing実行 |
+| 旧Viewer effectが後着して新geometry/非表示状態を上書き(P2) | 全I/O/decodeをlocalへ準備し、最終alive確認後にgeometry+visibility+stateを同期反映。欠損時はclear+明示エラー |
+| ZIP準備中の同期例外で部分import(P2) | 全ArrayBuffer/Blobをtransaction開始前に生成し、全requestとtx.doneを同時監視 |
+| MediaRecorder.start失敗後に録画不能(P2) | constructor/startを同じtryで保護し、handler/ref/状態を確実に解放してエラー表示 |
+| カメラ切替後に偽のREC表示(P2) | track停止前にrecording→savingへ同期遷移。inactiveな残留Recorderも解放 |
+| 同一動画の抽出ジョブを重複起動(P2) | createJobRecordのprojects/jobs単一txnでrunning/pausedを拒否。UIも別タブ通知と開始中状態で無効化 |
+| db.tsの実NULでGitがbinary判定(P3) | ソース表記を`\u0000`へ変更(NUL byte 0件) |
+
+### 3巡目対応後の動作確認(Chrome/localhost, 2タブ)
+
+- **一時停止→2タブ同時再開**: claim成功は1タブだけ。両タブで同一進捗を表示し、成果物はdense/surface各1組のみ追加
+- **別タブから一時停止**: stopRequested永続化+BroadcastChannelで両タブともpausedへ確定
+- **ビューア表示OFFの維持**: 点群/サーフェスをOFFのまま別タブで再開・成果物更新後もcheckbox OFF、読込エラーなし
+- **旧v1 ZIP seq正規化の純粋関数テスト**: dense 1,1,2→1,2,3 / surface 3,3→3,4 / gap 1,3は維持
+- ZIP出力3.3MB成功、ブラウザ2タブのconsole warning/error 0件
+- `npm run build`成功、`npm audit` 0件、`git diff --check`成功、NUL byte 0件
+- 実カメラがないためMediaRecorder失敗/カメラ切替は型検査+ロジックレビューのみ(実機確認は継続課題)
+
 ## 未確認・既知の課題
 
 - [ ] 実カメラ(スマホ/USB/内蔵)での撮影動作 — HTTPSまたはlocalhostが必要。Android実機は `adb reverse tcp:5173 tcp:5173` で localhost 接続可(レビュー対応のstream世代管理・録画チャンク分離も実機未確認)
 - [x] 実動画でのフレーム抽出 — 合成webm(canvas+MediaRecorder)でduration=Infinity経路含め確認済み。実カメラ撮影動画では未確認
 - [ ] Web Locks非対応ブラウザ(Safari 15.3以前等)では単一実行保証がないため従来動作(単一タブ想定)にフォールバック
 - [ ] iOS Safari(MediaRecorder/ImageCapture差異)
-- [ ] バンドル692KB(Three.js) — コード分割は後回しで可
+- [ ] バンドル721KB(Three.js) — コード分割は後回しで可
 - [ ] Gallery: 画像を全件Blob URL化するためフレーム数百枚時に重い可能性 → サムネイル保存の検討
 - [ ] 大容量ZIPのメモリ使用(fflateを全メモリで使用) → ストリーミング化の検討
 - [ ] IndexedDBの容量制限に対する警告UI(navigator.storage.estimate)

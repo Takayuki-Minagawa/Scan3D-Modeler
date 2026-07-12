@@ -20,6 +20,7 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
   const [showPoints, setShowPoints] = useState(true);
   const [showMesh, setShowMesh] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   // 再読込(refreshKey更新)でgeometryを作り直した直後に現在の表示ON/OFFを
   // 再適用するための参照(新規作成されたPoints/Meshは既定でvisibleのため)
   const visRef = useRef({ points: true, mesh: true });
@@ -38,45 +39,66 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
     let alive = true;
     (async () => {
       setLoading(true);
+      setError('');
       const view = viewRef.current;
       if (!view) return;
+      try {
+        // I/Oとdecodeはすべてlocalへ準備し、最後のalive確認後に一括commitする。
+        // cleanup済みeffectがThreeViewへ途中結果を書き、新effectを上書きするのを防ぐ。
+        const [clouds, meshes] = await Promise.all([
+          listAssets(props.projectId, ['pointcloud']),
+          listAssets(props.projectId, ['mesh']),
+        ]);
+        if (!alive) return;
 
-      const clouds = await listAssets(props.projectId, ['pointcloud']);
-      const cloudAsset = clouds.at(-1);
-      if (cloudAsset) {
-        const blob = await getAssetBlob(cloudAsset.id);
-        if (blob && alive) {
-          view.setPointCloud(new Float32Array(await blob.arrayBuffer()));
-          const stage = cloudAsset.stageId ? await getStage(cloudAsset.stageId) : undefined;
-          setCloud({ asset: cloudAsset, stage });
+        const cloudAsset = clouds.at(-1);
+        let nextCloud: { loaded: Loaded; points: Float32Array } | null = null;
+        if (cloudAsset) {
+          const [blob, stage] = await Promise.all([
+            getAssetBlob(cloudAsset.id),
+            cloudAsset.stageId ? getStage(cloudAsset.stageId) : undefined,
+          ]);
+          if (!blob) throw new Error(`点群「${cloudAsset.name}」の本体データがありません`);
+          const buf = await blob.arrayBuffer();
+          nextCloud = {
+            loaded: { asset: cloudAsset, stage },
+            points: new Float32Array(buf),
+          };
         }
-      } else {
-        view.setPointCloud(null);
-        setCloud(null);
-      }
 
-      const meshes = await listAssets(props.projectId, ['mesh']);
-      const meshAsset = meshes.at(-1);
-      if (meshAsset) {
-        const blob = await getAssetBlob(meshAsset.id);
-        if (blob && alive) {
+        const meshAsset = meshes.at(-1);
+        let nextMesh:
+          | { loaded: Loaded; positions: Float32Array; indices: Uint32Array }
+          | null = null;
+        if (meshAsset) {
+          const [blob, stage] = await Promise.all([
+            getAssetBlob(meshAsset.id),
+            meshAsset.stageId ? getStage(meshAsset.stageId) : undefined,
+          ]);
+          if (!blob) throw new Error(`サーフェス「${meshAsset.name}」の本体データがありません`);
           const decoded = decodeMeshBinary(await blob.arrayBuffer());
-          view.setMesh(decoded.positions, decoded.indices);
-          const stage = meshAsset.stageId ? await getStage(meshAsset.stageId) : undefined;
-          setMesh({ asset: meshAsset, stage });
+          nextMesh = { loaded: { asset: meshAsset, stage }, ...decoded };
         }
-      } else {
-        view.setMesh(null);
-        setMesh(null);
-      }
 
-      if (alive) {
-        // 作り直したgeometryへ現在のチェックボックス状態を再適用する
-        // (これがないと点群OFF中の再読込で点群が勝手に再表示される)
+        if (!alive) return;
+        // geometry作成とvisibility再適用の間にawaitを挟まず、OFF状態で一度も
+        // stale geometryを表示しない。Blob欠損時はcatchで旧geometryも消す。
+        view.setPointCloud(nextCloud?.points ?? null);
         view.setVisibility('points', visRef.current.points);
+        view.setMesh(nextMesh?.positions ?? null, nextMesh?.indices);
         view.setVisibility('mesh', visRef.current.mesh);
+        setCloud(nextCloud?.loaded ?? null);
+        setMesh(nextMesh?.loaded ?? null);
         view.fit();
-        setLoading(false);
+      } catch (e) {
+        if (!alive) return;
+        view.setPointCloud(null);
+        view.setMesh(null);
+        setCloud(null);
+        setMesh(null);
+        setError(`3Dデータを読み込めません: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -121,6 +143,7 @@ export function ViewerPanel(props: { projectId: string; refreshKey: number }) {
         </div>
       }
     >
+      {error && <p className="warn-box">{error}</p>}
       <div className="viewer" ref={containerRef}>
         {!loading && !cloud && !mesh && (
           <div className="viewer-empty">

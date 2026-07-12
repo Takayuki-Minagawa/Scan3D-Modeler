@@ -72,6 +72,7 @@ export interface AssetMeta {
 
 export type JobType = 'extractFrames' | 'scoreImages' | 'demoReconstruct';
 export type JobStatus = 'running' | 'paused' | 'done' | 'failed' | 'canceled';
+export type JobStopMode = 'pause' | 'cancel';
 
 /**
  * ジョブ実行記録。checkpoint を IndexedDB に永続化することで、
@@ -83,6 +84,17 @@ export interface JobRecord {
   type: JobType;
   title: string;
   status: JobStatus;
+  /**
+   * 実行権の識別子。開始/再開のたびに新しい値で条件付き更新(claim)され、
+   * ロック取得後にこの値を照合することで、古い実行要求が完了・失敗・中止
+   * 済みのジョブを再実行してしまうのを防ぐ(at-most-once実行)
+  */
+  runToken?: string;
+  /**
+   * 実行タブがAbortSignalを受け取る前でも停止要求を失わないための永続フラグ。
+   * runTokenと同じtransactionで照合し、terminal遷移時に必ず消費する。
+   */
+  stopRequested?: JobStopMode;
   /** 0..1 */
   progress: number;
   message?: string;

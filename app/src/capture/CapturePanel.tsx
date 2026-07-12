@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addAsset } from '../db/assets';
-import { startJob } from '../jobs/runner';
 import { DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
 import { Section } from '../ui/common';
 import { timestampName } from '../ui/misc';
 import { saveStillFromVideo } from './imageUtil';
+import { startFrameExtraction } from './startFrameExtraction';
 
 /**
  * カメラ撮影UI(1B-1)。
@@ -25,20 +25,57 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   const [starting, setStarting] = useState(false);
   // idle: 待機 / recording: 録画中 / saving: 停止後、保存完了(onstop)待ち
   const [recState, setRecState] = useState<'idle' | 'recording' | 'saving'>('idle');
+  // stopCameraなどのstable callbackからも、直前に同期更新した状態を参照する。
+  const recStateRef = useRef<'idle' | 'recording' | 'saving'>('idle');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
   const supported = !!navigator.mediaDevices?.getUserMedia;
 
+  const updateRecState = useCallback((next: 'idle' | 'recording' | 'saving') => {
+    recStateRef.current = next;
+    setRecState(next);
+  }, []);
+
+  /** 開始失敗・保存完了後に、Recorderの参照とイベントhandlerを確実に解放する。 */
+  const releaseRecorder = useCallback(
+    (rec: MediaRecorder) => {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      if (recorderRef.current === rec) recorderRef.current = null;
+      updateRecState('idle');
+    },
+    [updateRecState],
+  );
+
+  /** recording/pausedなら保存待ちへ即時遷移して停止し、staleなinactive参照も解放する。 */
+  const requestRecorderStop = useCallback(() => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    if (rec.state === 'recording' || rec.state === 'paused') {
+      updateRecState('saving');
+      try {
+        rec.stop();
+      } catch (e) {
+        releaseRecorder(rec);
+        setError(`録画を停止できません: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } else if (recStateRef.current !== 'saving') {
+      // start失敗等でonstopが来ないinactive recorderを門番として残さない。
+      releaseRecorder(rec);
+    }
+  }, [releaseRecorder, updateRecState]);
+
   const stopCamera = useCallback(() => {
     streamSeq.current++; // 進行中のgetUserMedia要求を無効化する
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+    // trackを止める前にUIをsavingへ変え、新stream上へ偽のREC表示を持ち越さない。
+    requestRecorderStop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setActive(false);
     setStarting(false);
-  }, []);
+  }, [requestRecorderStop]);
 
   useEffect(() => stopCamera, [stopCamera]);
 
@@ -114,64 +151,94 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
   function startRecording() {
     const stream = streamRef.current;
     // 前回録画の保存(onstop)完了までは開始しない(recorderRefが門番)
-    if (!stream || recState !== 'idle' || recorderRef.current) return;
-    const candidates = [
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4',
-    ];
-    const mime = candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? '';
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    // チャンクはこのMediaRecorder専用のクロージャに保持する
-    // (共有バッファだと連続録画で新旧のチャンクが混在・消失する)
-    const chunks: Blob[] = [];
-    rec.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-    };
-    rec.onstop = async () => {
-      try {
-        const type = rec.mimeType || 'video/webm';
-        const ext = type.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunks, { type });
-        if (blob.size === 0) {
-          setStatus('録画データが空でした');
-          return;
-        }
-        const asset = await addAsset({
-          projectId: props.projectId,
-          kind: 'video',
-          name: `rec_${timestampName()}.${ext}`,
-          blob,
-          meta: { source: 'camera' },
-        });
-        setStatus(`録画を保存しました: ${asset.name}`);
-        props.onCaptured();
-        if (window.confirm('録画からキーフレーム抽出を開始しますか?(後からでも実行できます)')) {
-          await startJob('extractFrames', props.projectId, `フレーム抽出: ${asset.name}`, {
-            videoAssetId: asset.id,
-            stepMs: 250,
-            blurThreshold: DEFAULT_BLUR_THRESHOLD,
+    if (!stream || recStateRef.current !== 'idle' || recorderRef.current) return;
+    setError('');
+    let rec: MediaRecorder | null = null;
+    try {
+      const candidates = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4',
+      ];
+      const mime = candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? '';
+      const createdRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      rec = createdRecorder;
+      // チャンクはこのMediaRecorder専用のクロージャに保持する
+      // (共有バッファだと連続録画で新旧のチャンクが混在・消失する)
+      const chunks: Blob[] = [];
+      createdRecorder.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      createdRecorder.onstop = async () => {
+        try {
+          const type = createdRecorder.mimeType || 'video/webm';
+          const ext = type.includes('mp4') ? 'mp4' : 'webm';
+          const blob = new Blob(chunks, { type });
+          if (blob.size === 0) {
+            setStatus('録画データが空でした');
+            return;
+          }
+          const asset = await addAsset({
+            projectId: props.projectId,
+            kind: 'video',
+            name: `rec_${timestampName()}.${ext}`,
+            blob,
+            meta: { source: 'camera' },
           });
-          setStatus('フレーム抽出を開始しました(パイプラインタブで進捗を確認できます)');
+          setStatus(`録画を保存しました: ${asset.name}`);
+          props.onCaptured();
+          if (
+            window.confirm('録画からキーフレーム抽出を開始しますか?(後からでも実行できます)')
+          ) {
+            try {
+              const started = await startFrameExtraction(props.projectId, asset.id, asset.name);
+              setStatus(
+                started
+                  ? 'フレーム抽出を開始しました(パイプラインタブで進捗を確認できます)'
+                  : 'この動画のフレーム抽出はすでに実行中または一時停止中です',
+              );
+            } catch (e) {
+              // 動画本体の保存は成功済み。抽出開始だけの失敗として区別する。
+              setStatus(
+                `録画は保存しましたが、フレーム抽出を開始できません: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
+            }
+          }
+        } catch (e) {
+          setStatus(`録画の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          // onstopはこのrecorderに対応する保存が完了した時点でのみ門番を外す。
+          releaseRecorder(createdRecorder);
         }
-      } catch (e) {
-        setStatus(`録画の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
+      };
+      recorderRef.current = createdRecorder;
+      // constructorだけでなくstart()も同期throwするため、ref設定後も同じtryで囲む。
+      createdRecorder.start(1000);
+      updateRecState('recording');
+    } catch (e) {
+      if (rec) {
+        // start失敗時はonstopが発火しない。handler/ref/stateをその場で元へ戻す。
+        releaseRecorder(rec);
+        if (rec.state !== 'inactive') {
+          try {
+            rec.stop();
+          } catch {
+            // 失敗経路の後始末なので、元の開始エラーを優先して表示する。
+          }
+        }
+      } else {
         recorderRef.current = null;
-        setRecState('idle');
+        updateRecState('idle');
       }
-    };
-    recorderRef.current = rec;
-    rec.start(1000);
-    setRecState('recording');
+      setError(`録画を開始できません: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   function stopRecording() {
-    if (recorderRef.current?.state === 'recording') {
-      setRecState('saving');
-      recorderRef.current.stop();
-    }
+    requestRecorderStop();
   }
 
   return (

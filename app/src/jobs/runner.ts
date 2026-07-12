@@ -1,13 +1,19 @@
+import { uid } from '../db/db';
 import {
   appendJobStage,
+  claimJobRun,
+  confirmJobRun,
   createJobRecord,
+  finalizeJobRun,
   getJob,
   listJobs,
   listRunningJobs,
-  updateJob,
+  reconcileOrphanedJob,
+  requestJobStop,
+  updateJobForRun,
 } from '../db/jobs';
 import { getStage, setStageStatus } from '../db/stages';
-import type { JobRecord, JobType } from '../types';
+import type { JobRecord, JobStopMode, JobType } from '../types';
 import { tryRunWithJobLock, waitJobLockReleased } from './lock';
 
 /**
@@ -57,7 +63,11 @@ export class JobStopped extends Error {
 }
 
 const engines = new Map<JobType, JobEngine>();
-const controllers = new Map<string, AbortController>();
+interface ActiveRun {
+  controller: AbortController;
+  runToken: string;
+}
+const controllers = new Map<string, ActiveRun>();
 
 /**
  * ジョブ変化通知。購読側が「どのプロジェクトの・どの種類の変化か」で
@@ -78,13 +88,17 @@ const listeners = new Set<(ev: JobsChangedEvent) => void>();
 /** タブ間同期: 停止要求の転送と状態変化の通知 */
 type ChannelMessage =
   | { type: 'changed'; event: JobsChangedEvent }
-  | { type: 'stop'; jobId: string; mode: 'pause' | 'cancel' };
+  | { type: 'stop'; jobId: string; runToken?: string; mode: JobStopMode };
 const channel =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('scan2fem-jobs') : null;
 channel?.addEventListener('message', (ev: MessageEvent<ChannelMessage>) => {
   const m = ev.data;
   if (m?.type === 'stop') {
-    controllers.get(m.jobId)?.abort(new JobStopped(m.mode));
+    const active = controllers.get(m.jobId);
+    // 古い/世代不明の停止要求が再開後の新しい実行を止めないよう必ず照合する。
+    if (active && active.runToken === m.runToken) {
+      active.controller.abort(new JobStopped(m.mode));
+    }
   } else if (m?.type === 'changed') {
     notifyLocal(m.event ?? { projectId: null, kind: 'change' });
   }
@@ -115,22 +129,53 @@ export async function startJob(
   title: string,
   params: Record<string, unknown>,
 ): Promise<string> {
-  const job = await createJobRecord(type, projectId, title, params);
-  void run(job.id);
+  const runToken = uid();
+  const job = await createJobRecord(type, projectId, title, params, runToken);
+  void run(job.id, runToken);
   return job.id;
 }
 
 export async function resumeJob(jobId: string): Promise<void> {
-  const job = await getJob(jobId);
-  if (!job || job.status !== 'paused' || controllers.has(jobId)) return;
-  await updateJob(jobId, { status: 'running', error: undefined, message: '再開しました' });
-  void run(jobId);
+  if (controllers.has(jobId)) return; // このタブで実行中
+  // paused のときだけ running + 新しいrunToken へ条件付きで遷移(claim)する。
+  // 二重resume(連打・別タブ)では先勝ちで、負けた呼び出しはnullを受け取り
+  // 実行に進まないため、terminalジョブの再実行やstatusの巻き戻しが起きない
+  const claimed = await claimJobRun(jobId, uid(), ['paused'], '再開しました');
+  if (!claimed) return;
+  emit({ projectId: claimed.projectId, kind: 'change' });
+  void run(jobId, claimed.runToken!);
 }
 
-export function stopJob(jobId: string, mode: 'pause' | 'cancel'): void {
-  controllers.get(jobId)?.abort(new JobStopped(mode));
-  // 他タブで実行中の場合にも停止要求を届ける
-  channel?.postMessage({ type: 'stop', jobId, mode } satisfies ChannelMessage);
+export async function stopJob(
+  jobId: string,
+  mode: JobStopMode,
+  runToken?: string,
+): Promise<void> {
+  // Controller登録前・terminal書込み中でも失わないようDB永続化を開始しつつ、
+  // 実行タブにはAbortSignalで即時通知する。runTokenで古い要求を隔離する。
+  const persisted = requestJobStop(jobId, runToken, mode);
+  const active = controllers.get(jobId);
+  if (active && active.runToken === runToken) {
+    active.controller.abort(new JobStopped(mode));
+  }
+  channel?.postMessage({ type: 'stop', jobId, runToken, mode } satisfies ChannelMessage);
+  const requested = await persisted;
+  if (requested) {
+    // 永続化待ちの間にControllerが登録された場合も取りこぼさない。同様に、
+    // 受信タブが最初のBroadcast後にControllerを登録した場合へ再送する。
+    const effectiveMode = requested.stopRequested ?? mode;
+    const activeAfterPersist = controllers.get(jobId);
+    if (activeAfterPersist && activeAfterPersist.runToken === runToken) {
+      activeAfterPersist.controller.abort(new JobStopped(effectiveMode));
+    }
+    channel?.postMessage({
+      type: 'stop',
+      jobId,
+      runToken,
+      mode: effectiveMode,
+    } satisfies ChannelMessage);
+    emit({ projectId: requested.projectId, kind: 'change' });
+  }
 }
 
 /**
@@ -140,7 +185,7 @@ export function stopJob(jobId: string, mode: 'pause' | 'cancel'): void {
 export async function stopProjectJobs(projectId: string): Promise<void> {
   const jobs = await listJobs(projectId);
   const active = jobs.filter((j) => j.status === 'running');
-  for (const j of active) stopJob(j.id, 'cancel');
+  await Promise.all(active.map((j) => stopJob(j.id, 'cancel', j.runToken)));
   await Promise.all(active.map((j) => waitJobLockReleased(j.id, 5000)));
 }
 
@@ -164,26 +209,60 @@ export function isJobLive(jobId: string): boolean {
  */
 let reconciling = false;
 let lastReconcileAt = 0;
+let pendingReconcileDueAt: number | null = null;
+let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 間引き/実行中に来た要求を捨てず、指定時刻以降に1回へ集約する。 */
+function scheduleReconcileAt(dueAt: number): void {
+  pendingReconcileDueAt = Math.max(pendingReconcileDueAt ?? 0, dueAt);
+  if (reconciling) return;
+  if (trailingTimer) clearTimeout(trailingTimer);
+  const wait = Math.max(0, pendingReconcileDueAt - Date.now());
+  trailingTimer = setTimeout(() => {
+    trailingTimer = null;
+    pendingReconcileDueAt = null;
+    void reconcileJobs(0);
+  }, wait);
+}
 
 export async function reconcileJobs(minIntervalMs = 0): Promise<void> {
-  if (reconciling || Date.now() - lastReconcileAt < minIntervalMs) return;
+  const requestedAt = Date.now();
+  // 実行中に来たwake要求は、そのイベント時点からminIntervalを保つ。
+  // 長いreconcileの終了直後に即再実行してlock解放直前を再び外すのを防ぐ。
+  const dueAt = reconciling
+    ? requestedAt + minIntervalMs
+    : Math.max(requestedAt, lastReconcileAt + minIntervalMs);
+  // 実行中: 唯一のfocus/visibilityイベントを捨てず、終了後に必ず1回再実行する
+  // (実行タブが閉じた直後にこのタブへ戻ってきた要求を取りこぼすと、孤立した
+  //  runningジョブが再開もエクスポートもできないまま残るため)
+  if (reconciling) {
+    scheduleReconcileAt(dueAt);
+    return;
+  }
+  // 間引き中: 残り時間の経過後に1回だけ再実行を予約する(同上の取りこぼし防止)
+  if (dueAt > Date.now()) {
+    scheduleReconcileAt(dueAt);
+    return;
+  }
   reconciling = true;
   try {
     lastReconcileAt = Date.now();
     for (const j of await listRunningJobs()) {
       if (controllers.has(j.id)) continue; // このタブで実行中
       await tryRunWithJobLock(j.id, async () => {
-        const cur = await getJob(j.id);
-        if (cur?.status !== 'running') return;
-        await updateJob(j.id, {
-          status: 'paused',
-          message: '実行が中断されました(続きから再開できます)',
-        });
-        emit({ projectId: j.projectId, kind: 'change' });
+        const reconciled = await reconcileOrphanedJob(j.id);
+        if (!reconciled) return;
+        if (reconciled.status === 'canceled') {
+          await failBoundStages(j.id, 'ジョブ中止により未完了');
+        }
+        emit({ projectId: reconciled.projectId, kind: 'change' });
       });
     }
   } finally {
     reconciling = false;
+    // 実行中に来た要求は、元のminIntervalの期限を保ったままtrailing実行する。
+    // focus時点で旧タブのlock解放が未完でも、期限後に再確認できる。
+    if (pendingReconcileDueAt !== null) scheduleReconcileAt(pendingReconcileDueAt);
   }
 }
 
@@ -192,34 +271,48 @@ export function throwIfStopped(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
 }
 
-async function run(jobId: string): Promise<void> {
+async function run(jobId: string, runToken: string): Promise<void> {
   if (controllers.has(jobId)) return;
   // 整合処理(reconcileJobs)が判定のため同じロックを瞬間的に保持している
   // ことがあるため、取得に失敗したら解放を短時間だけ待って1回再試行する
   for (let attempt = 0; ; attempt++) {
-    const acquired = await tryRunWithJobLock(jobId, () => execute(jobId));
+    const acquired = await tryRunWithJobLock(jobId, () => execute(jobId, runToken));
     if (acquired) return;
     if (attempt >= 1 || !(await waitJobLockReleased(jobId, 300))) break;
   }
   // 他タブがロック保持中 = 実行中。二重実行はしない
   const j = await getJob(jobId);
-  await updateJob(jobId, { message: '別のタブで実行中です' });
-  emit({ projectId: j?.projectId ?? null, kind: 'change' });
+  const changed = await updateJobForRun(jobId, runToken, { message: '別のタブで実行中です' });
+  if (changed) emit({ projectId: j?.projectId ?? null, kind: 'change' });
 }
 
-async function execute(jobId: string): Promise<void> {
-  const job = await getJob(jobId);
-  if (!job) return;
+async function execute(jobId: string, runToken: string): Promise<void> {
+  // ロックを取得した状態で、この実行要求(runToken)がまだ有効かを最終確認する。
+  // 別タブが先に完了/失敗/中止させていたり、別のstart/resumeが新しいrunToken
+  // でclaimし直していれば confirmJobRun は null を返す。Web Lockは同時実行を
+  // 防ぐが、ロック解放後の再試行による逐次の再実行はこの照合で止める
+  // (完了・中止済みジョブを取り直して無条件にrunningへ戻すのを防ぐ)。
+  const confirmation = await confirmJobRun(jobId, runToken);
+  if (!confirmation) return;
+  if (confirmation.outcome === 'stopped') {
+    if (confirmation.mode === 'cancel') {
+      await failBoundStages(jobId, 'ジョブ中止により未完了');
+    }
+    emit({ projectId: confirmation.job.projectId, kind: 'change' });
+    return;
+  }
+  const job = confirmation.job;
   const engine = engines.get(job.type);
   if (!engine) {
-    await updateJob(jobId, { status: 'failed', error: `エンジン未登録: ${job.type}` });
+    await finalizeJobRun(jobId, runToken, {
+      kind: 'failed',
+      error: `エンジン未登録: ${job.type}`,
+    });
     emit({ projectId: job.projectId, kind: 'change' });
     return;
   }
-  // 起動直後に他タブのreconcileと競合した場合に備え、状態を実行中へ揃える
-  await updateJob(jobId, { status: 'running' });
   const ac = new AbortController();
-  controllers.set(jobId, ac);
+  controllers.set(jobId, { controller: ac, runToken });
   let lastPersist = 0;
   const ctx: JobContext = {
     job,
@@ -231,13 +324,13 @@ async function execute(jobId: string): Promise<void> {
       // 書き込み頻度を抑えつつ進捗を永続化する
       if (t - lastPersist > 300) {
         lastPersist = t;
-        void updateJob(jobId, { progress, message }).then(() =>
-          emit({ projectId: job.projectId, kind: 'progress' }),
-        );
+        void updateJobForRun(jobId, runToken, { progress, message }).then((changed) => {
+          if (changed) emit({ projectId: job.projectId, kind: 'progress' });
+        });
       }
     },
     saveCheckpoint: async (cp) => {
-      await updateJob(jobId, { checkpoint: cp });
+      await updateJobForRun(jobId, runToken, { checkpoint: cp });
     },
     bindStage: (stageId) => appendJobStage(jobId, stageId),
     notifyDataChanged: () => emit({ projectId: job.projectId, kind: 'change' }),
@@ -245,23 +338,36 @@ async function execute(jobId: string): Promise<void> {
   emit({ projectId: job.projectId, kind: 'change' });
   try {
     await engine(ctx);
-    await updateJob(jobId, { status: 'done', progress: 1, message: '完了' });
+    // エンジンが正常returnしても、最後のawait(stage確定・アセット更新など)中に
+    // 停止要求が来ていれば done 化しない。停止要求を完了より優先することで、
+    // 各エンジンが末尾で個別に停止確認をしなくても取りこぼさない(runner側で仲裁)
+    throwIfStopped(ac.signal);
+    const finalized = await finalizeJobRun(jobId, runToken, { kind: 'done' });
+    if (finalized?.outcome === 'canceled') {
+      await failBoundStages(jobId, 'ジョブ中止により未完了');
+    }
   } catch (e) {
     if (e instanceof JobStopped) {
-      await updateJob(jobId, {
-        status: e.mode === 'pause' ? 'paused' : 'canceled',
-        message: e.mode === 'pause' ? '一時停止中(再開できます)' : '中止しました',
+      const finalized = await finalizeJobRun(jobId, runToken, {
+        kind: 'stopped',
+        mode: e.mode,
       });
-      if (e.mode === 'cancel') await failBoundStages(jobId, 'ジョブ中止により未完了');
+      if (finalized?.outcome === 'canceled') {
+        await failBoundStages(jobId, 'ジョブ中止により未完了');
+      }
     } else {
-      await updateJob(jobId, {
-        status: 'failed',
+      const finalized = await finalizeJobRun(jobId, runToken, {
+        kind: 'failed',
         error: e instanceof Error ? e.message : String(e),
       });
-      await failBoundStages(jobId, 'ジョブ失敗により未完了');
+      if (finalized?.outcome === 'canceled') {
+        await failBoundStages(jobId, 'ジョブ中止により未完了');
+      } else if (finalized?.outcome === 'failed') {
+        await failBoundStages(jobId, 'ジョブ失敗により未完了');
+      }
     }
   } finally {
-    controllers.delete(jobId);
+    if (controllers.get(jobId)?.runToken === runToken) controllers.delete(jobId);
     emit({ projectId: job.projectId, kind: 'change' });
   }
 }
