@@ -6,7 +6,24 @@ export interface BlurResult {
 
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, (r: BlurResult) => void>();
+interface PendingRequest {
+  resolve: (r: BlurResult) => void;
+  reject: (e: Error) => void;
+}
+const pending = new Map<number, PendingRequest>();
+
+/**
+ * Workerのエラーで保留中の全要求を失敗させる。放置すると呼び出し側の
+ * ジョブがawaitのまま永久待機し、一時停止も完了もできなくなるため。
+ * 壊れたWorkerは破棄し、次回要求時に作り直す。
+ */
+function failAllPending(message: string): void {
+  const err = new Error(message);
+  for (const p of pending.values()) p.reject(err);
+  pending.clear();
+  worker?.terminate();
+  worker = null;
+}
 
 function ensureWorker(): Worker {
   if (!worker) {
@@ -15,9 +32,12 @@ function ensureWorker(): Worker {
     });
     worker.onmessage = (ev: MessageEvent<{ id: number; score: number; thumb: Float32Array }>) => {
       const { id, score, thumb } = ev.data;
-      pending.get(id)?.({ score, thumb });
+      pending.get(id)?.resolve({ score, thumb });
       pending.delete(id);
     };
+    worker.onerror = (e) =>
+      failAllPending(`ブレ判定ワーカーでエラーが発生しました: ${e.message || '不明なエラー'}`);
+    worker.onmessageerror = () => failAllPending('ブレ判定ワーカーとの通信に失敗しました');
   }
   return worker;
 }
@@ -26,8 +46,8 @@ function ensureWorker(): Worker {
 export function scoreImageData(img: ImageData): Promise<BlurResult> {
   const w = ensureWorker();
   const id = nextId++;
-  return new Promise((resolve) => {
-    pending.set(id, resolve);
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
     w.postMessage({ id, width: img.width, height: img.height, data: img.data }, [
       img.data.buffer,
     ]);

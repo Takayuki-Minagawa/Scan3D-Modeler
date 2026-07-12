@@ -15,6 +15,9 @@
 
 ## 開発環境
 
+Node.js **20.19以降 または 22.12以降** が必要です(Vite 8の要件。`package.json` の
+`engines` にも記載)。
+
 ```bash
 cd app
 npm install

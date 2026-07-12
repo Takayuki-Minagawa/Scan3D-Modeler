@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "小型対象物3Dスキャン・FEMモデル作成Webアプリ(静的アプリ版)",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

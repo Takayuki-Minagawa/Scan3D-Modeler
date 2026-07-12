@@ -1,14 +1,44 @@
-import { useRef, useState } from 'react';
-import { addAsset } from '../db/assets';
+import { useEffect, useRef, useState } from 'react';
+import { addAsset, listAssets } from '../db/assets';
 import { startJob } from '../jobs/runner';
 import { DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
+import type { AssetMeta } from '../types';
 import { Section } from '../ui/common';
 
 /** ファイル取込(1B-2)。デジカメ・スマホで撮影済みの静止画/動画のアップロード */
-export function ImportPanel(props: { projectId: string; onImported: () => void }) {
+export function ImportPanel(props: {
+  projectId: string;
+  refreshKey: number;
+  onImported: () => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const [videos, setVideos] = useState<AssetMeta[]>([]);
+
+  // 保存済み動画の一覧(取込時に抽出を見送っても、ここから後で実行できる)
+  useEffect(() => {
+    let alive = true;
+    void listAssets(props.projectId, ['video']).then((v) => {
+      if (alive) setVideos(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [props.projectId, props.refreshKey]);
+
+  async function extractFrom(v: AssetMeta) {
+    try {
+      await startJob('extractFrames', props.projectId, `フレーム抽出: ${v.name}`, {
+        videoAssetId: v.id,
+        stepMs: 250,
+        blurThreshold: DEFAULT_BLUR_THRESHOLD,
+      });
+      setStatus(`「${v.name}」のフレーム抽出を開始しました(パイプラインタブで進捗を確認できます)`);
+    } catch (e) {
+      setStatus(`フレーム抽出を開始できません: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -53,6 +83,9 @@ export function ImportPanel(props: { projectId: string; onImported: () => void }
           });
         }
       }
+    } catch (e) {
+      // 別タブでプロジェクトが削除された直後など
+      setStatus(`取込に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -73,6 +106,23 @@ export function ImportPanel(props: { projectId: string; onImported: () => void }
         {busy && <span className="hint">取込中…</span>}
       </div>
       {status && <p className="hint">{status}</p>}
+      {videos.length > 0 && (
+        <div>
+          <p className="hint">保存済みの動画(後からでもフレーム抽出を実行できます):</p>
+          <ul className="job-list">
+            {videos.map((v) => (
+              <li key={v.id} className="job-item">
+                <div className="row wrap">
+                  <span>
+                    {v.name}({(v.size / (1024 * 1024)).toFixed(1)}MB)
+                  </span>
+                  <button onClick={() => void extractFrom(v)}>フレーム抽出</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="hint">
         取り込んだ画像は自動でブレ判定されます。動画はキーフレーム抽出(中断・再開可能)にかけられます。
       </p>
