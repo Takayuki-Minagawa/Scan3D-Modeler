@@ -116,6 +116,7 @@ export async function demoReconstructEngine(
         meta: { count: total / 3, unit: 'mm' },
       });
       await setStageStatus(denseStage.id, 'ready', { 点数: total / 3 });
+      ctx.notifyDataChanged(); // 完了前でも点群をビューア等へ反映させる
     } finally {
       worker.terminate();
     }
@@ -152,5 +153,11 @@ export async function demoReconstructEngine(
       頂点数: mesh.positions.length / 3,
       三角形数: mesh.indices.length / 3,
     });
+    ctx.notifyDataChanged();
   }
+
+  // 停止契約: surface保存中(複数await)に届いた停止要求もdone確定前に必ず
+  // 観測する。成果物は保存済み+冪等なので、ここで一時停止しても再開時は
+  // ready済み工程をスキップしてすぐ完了する
+  throwIfStopped(ctx.signal);
 }

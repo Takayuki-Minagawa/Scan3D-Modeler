@@ -23,7 +23,10 @@ interface ExtractCheckpoint {
   nextMs: number;
   kept: number;
   scanned: number;
+  /** 直前に採用した鮮明フレームの縮小画(採用系の重複判定基準) */
   lastThumb: Float32Array | null;
+  /** 直前に保存したブレフレームの縮小画(ブレ画像同士の重複判定基準) */
+  lastBlurThumb?: Float32Array | null;
 }
 
 const DEDUP_DIFF_THRESHOLD = 2.0;
@@ -56,7 +59,14 @@ export async function extractFramesEngine(
         params: { stepMs, blurThreshold, video: videoAsset.name },
         note: `動画「${videoAsset.name}」から抽出`,
       });
-      cp = { stageId: stage.id, nextMs: 0, kept: 0, scanned: 0, lastThumb: null };
+      cp = {
+        stageId: stage.id,
+        nextMs: 0,
+        kept: 0,
+        scanned: 0,
+        lastThumb: null,
+        lastBlurThumb: null,
+      };
       await ctx.saveCheckpoint(cp);
     }
     // ジョブが失敗/中止で終わるときにstageをrunningのまま残さないよう関連付ける
@@ -77,12 +87,20 @@ export async function extractFramesEngine(
       cp.scanned++;
       const sharp = score >= blurThreshold;
 
-      // 重複判定の基準(lastThumb)は「直前に採用した鮮明フレーム」に限定する。
-      // ブレ除外フレームを基準にすると、同じ構図でピントの合った次のフレームまで
-      // 重複扱いになって保存されず、良品フレームを失うため。
-      const isDuplicate =
+      // 重複判定は2系統の基準で行う:
+      // - 採用の基準(lastThumb)は「直前に採用した鮮明フレーム」のみ。
+      //   ブレ除外フレームを基準にすると、同じ構図でピントの合った次の
+      //   フレームまで重複扱いになって良品を失うため
+      // - ブレフレーム同士は直前に保存したブレフレーム(lastBlurThumb)とも
+      //   比較する。これがないと全編ブレの動画で毎コマ全解像度JPEGを
+      //   保存し続け、端末の保存容量を使い切ってしまうため
+      const dupOfSharp =
         cp.lastThumb !== null && thumbDiff(cp.lastThumb, thumb) < DEDUP_DIFF_THRESHOLD;
-      if (!isDuplicate) {
+      const dupOfBlur =
+        !sharp &&
+        cp.lastBlurThumb != null &&
+        thumbDiff(cp.lastBlurThumb, thumb) < DEDUP_DIFF_THRESHOLD;
+      if (!dupOfSharp && !dupOfBlur) {
         const frameBlob = await canvasToBlob(canvas, 'image/jpeg', 0.85);
         await addAsset({
           projectId: ctx.job.projectId,
@@ -97,9 +115,12 @@ export async function extractFramesEngine(
         if (sharp) {
           cp.kept++;
           cp.lastThumb = thumb;
+          cp.lastBlurThumb = null; // 構図が進んだためブレ側の基準はリセット
+        } else {
+          // ブレフレームは参考用に除外印付きで保存するだけで、
+          // 採用数にも採用側の重複基準にも含めない
+          cp.lastBlurThumb = thumb;
         }
-        // ブレフレームは参考用に除外印付きで保存するだけで、
-        // 採用数にも重複判定の基準にも含めない
       }
 
       cp.nextMs = t + stepMs;
@@ -109,7 +130,11 @@ export async function extractFramesEngine(
         `${cp.kept}枚採用 / ${cp.scanned}コマ検査(ブレ・重複は除外)`,
       );
     }
+    // 停止契約: 最終フレーム保存中に届いた停止要求もready確定前に観測する
+    // (checkpointは全コマ処理済みのため、再開時はループを飛ばして確定だけ行う)
+    throwIfStopped(ctx.signal);
     await setStageStatus(cp.stageId, 'ready', { 採用枚数: cp.kept, 検査コマ数: cp.scanned });
+    ctx.notifyDataChanged();
   } finally {
     video.removeAttribute('src');
     video.load();
