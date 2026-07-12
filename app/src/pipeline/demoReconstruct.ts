@@ -1,5 +1,6 @@
 import { addAsset } from '../db/assets';
-import { createStage, setStageStatus } from '../db/stages';
+import { uid } from '../db/db';
+import { createStage, deleteStageCascade, getStage, setStageStatus } from '../db/stages';
 import { encodeMeshBinary } from '../export/formats';
 import { throwIfStopped, type JobContext } from '../jobs/runner';
 import { makeDemoLMesh } from './demoMesh';
@@ -12,6 +13,12 @@ import { makeDemoLMesh } from './demoMesh';
  *
  * チャンク単位で生成し、チャンク番号をチェックポイント保存する。
  * 再開時は完了済みチャンクを高速再生成(決定論的)して続きから進める。
+ *
+ * 成果物の保存は次の手順で冪等にする(保存途中に落ちても重複を作らない):
+ *   1. stage IDを先に採番してcheckpointへ保存
+ *   2. 同IDの作りかけstageが残っていれば掃除(deleteStageCascade)
+ *   3. 同IDでstage作成 → アセット保存 → ready
+ * 再開時にそのstageがready済みなら、その工程を丸ごとスキップする。
  */
 export interface DemoParams {
   chunks: number;
@@ -22,6 +29,8 @@ export interface DemoParams {
 
 interface DemoCheckpoint {
   nextChunk: number;
+  denseStageId?: string;
+  surfaceStageId?: string;
 }
 
 export const DEMO_DEFAULT_PARAMS: DemoParams = {
@@ -46,60 +55,89 @@ function requestChunk(worker: Worker, chunk: number, n: number, seed: number): P
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** stageがready済みか(冪等な再開のスキップ判定) */
+async function stageIsReady(stageId: string | undefined): Promise<boolean> {
+  if (!stageId) return false;
+  return (await getStage(stageId))?.status === 'ready';
+}
+
 export async function demoReconstructEngine(
   ctx: JobContext<DemoParams, DemoCheckpoint>,
 ): Promise<void> {
   const { chunks, pointsPerChunk, seed } = ctx.params;
-  const startChunk = ctx.checkpoint?.nextChunk ?? 0;
-  const worker = new Worker(new URL('../workers/demoCloud.worker.ts', import.meta.url), {
-    type: 'module',
-  });
-  try {
-    const parts: Float32Array[] = [];
-    // 完了済みチャンクの高速再生成(決定論的なので同一結果になる)
-    for (let c = 0; c < startChunk; c++) {
-      parts.push(await requestChunk(worker, c, pointsPerChunk, seed));
-    }
-    for (let c = startChunk; c < chunks; c++) {
-      throwIfStopped(ctx.signal);
-      parts.push(await requestChunk(worker, c, pointsPerChunk, seed));
-      // 実処理(SfM/MVS)の計算負荷を模した待ち。進捗・一時停止の動作確認用
-      await sleep(150);
-      await ctx.saveCheckpoint({ nextChunk: c + 1 });
-      ctx.report((c + 1) / (chunks + 1), `点群生成 ${c + 1}/${chunks} チャンク(デモ)`);
-    }
+  const cp: DemoCheckpoint = { nextChunk: 0, ...(ctx.checkpoint ?? {}) };
 
-    // 点群を1つのアセットに結合して保存(内部形式: 生のFloat32 xyz列)
-    const total = parts.reduce((s, p) => s + p.length, 0);
-    const points = new Float32Array(total);
-    let off = 0;
-    for (const p of parts) {
-      points.set(p, off);
-      off += p.length;
-    }
-    const denseStage = await createStage(ctx.job.projectId, 'dense', {
-      demo: true,
-      params: { ...ctx.params },
-      note: 'デモ生成(合成データ。実撮影由来ではありません)',
+  // --- 密点群(dense)。保存済みなら点群生成ごとスキップ ---
+  if (!(await stageIsReady(cp.denseStageId))) {
+    const worker = new Worker(new URL('../workers/demoCloud.worker.ts', import.meta.url), {
+      type: 'module',
     });
-    await addAsset({
-      projectId: ctx.job.projectId,
-      stageId: denseStage.id,
-      kind: 'pointcloud',
-      name: 'demo_dense_points.f32',
-      blob: new Blob([points.buffer], { type: 'application/octet-stream' }),
-      meta: { count: total / 3, unit: 'mm' },
-    });
-    await setStageStatus(denseStage.id, 'ready', { 点数: total / 3 });
+    try {
+      const parts: Float32Array[] = [];
+      // 完了済みチャンクの高速再生成(決定論的なので同一結果になる)
+      for (let c = 0; c < cp.nextChunk; c++) {
+        parts.push(await requestChunk(worker, c, pointsPerChunk, seed));
+      }
+      for (let c = cp.nextChunk; c < chunks; c++) {
+        throwIfStopped(ctx.signal);
+        parts.push(await requestChunk(worker, c, pointsPerChunk, seed));
+        // 実処理(SfM/MVS)の計算負荷を模した待ち。進捗・一時停止の動作確認用
+        await sleep(150);
+        cp.nextChunk = c + 1;
+        await ctx.saveCheckpoint({ ...cp });
+        ctx.report((c + 1) / (chunks + 1), `点群生成 ${c + 1}/${chunks} チャンク(デモ)`);
+      }
 
-    // デモサーフェス(L字押し出し)
+      // 点群を1つのアセットに結合して保存(内部形式: 生のFloat32 xyz列)
+      const total = parts.reduce((s, p) => s + p.length, 0);
+      const points = new Float32Array(total);
+      let off = 0;
+      for (const p of parts) {
+        points.set(p, off);
+        off += p.length;
+      }
+      cp.denseStageId ??= uid();
+      await ctx.saveCheckpoint({ ...cp });
+      const leftover = await getStage(cp.denseStageId);
+      if (leftover) await deleteStageCascade(cp.denseStageId); // 前回の作りかけを掃除
+      const denseStage = await createStage(ctx.job.projectId, 'dense', {
+        id: cp.denseStageId,
+        demo: true,
+        params: { ...ctx.params },
+        note: 'デモ生成(合成データ。実撮影由来ではありません)',
+      });
+      await ctx.bindStage(denseStage.id);
+      await addAsset({
+        projectId: ctx.job.projectId,
+        stageId: denseStage.id,
+        kind: 'pointcloud',
+        name: 'demo_dense_points.f32',
+        blob: new Blob([points.buffer], { type: 'application/octet-stream' }),
+        meta: { count: total / 3, unit: 'mm' },
+      });
+      await setStageStatus(denseStage.id, 'ready', { 点数: total / 3 });
+    } finally {
+      worker.terminate();
+    }
+  }
+
+  throwIfStopped(ctx.signal);
+
+  // --- デモサーフェス(L字押し出し)。同様に冪等 ---
+  if (!(await stageIsReady(cp.surfaceStageId))) {
     ctx.report(0.98, 'デモサーフェス生成中');
     const mesh = makeDemoLMesh();
+    cp.surfaceStageId ??= uid();
+    await ctx.saveCheckpoint({ ...cp });
+    const leftover = await getStage(cp.surfaceStageId);
+    if (leftover) await deleteStageCascade(cp.surfaceStageId);
     const surfaceStage = await createStage(ctx.job.projectId, 'surface', {
+      id: cp.surfaceStageId,
       demo: true,
-      sourceStageId: denseStage.id,
+      sourceStageId: cp.denseStageId ?? null,
       note: 'デモ生成(合成データ)',
     });
+    await ctx.bindStage(surfaceStage.id);
     await addAsset({
       projectId: ctx.job.projectId,
       stageId: surfaceStage.id,
@@ -114,7 +152,5 @@ export async function demoReconstructEngine(
       頂点数: mesh.positions.length / 3,
       三角形数: mesh.indices.length / 3,
     });
-  } finally {
-    worker.terminate();
   }
 }
