@@ -58,11 +58,20 @@ export async function getAssetBlob(id: string): Promise<Blob | undefined> {
   return (await (await db()).get('blobs', id))?.blob;
 }
 
+/**
+ * 部分更新。読み出し〜書き込みを単一トランザクションで行い、並行する更新
+ * (画質判定とギャラリーの採用/除外操作など)の古い読み値による上書きを防ぐ。
+ * レコードまたはプロジェクトが削除済みなら何もしない(削除済みメタの復活防止)。
+ */
 export async function updateAsset(id: string, patch: Partial<AssetMeta>): Promise<void> {
   const d = await db();
-  const a = await d.get('assets', id);
-  if (!a) return;
-  await d.put('assets', { ...a, ...patch, id: a.id });
+  const tx = d.transaction(['projects', 'assets'], 'readwrite');
+  const store = tx.objectStore('assets');
+  const a = await store.get(id);
+  if (a && (await tx.objectStore('projects').get(a.projectId))) {
+    await store.put({ ...a, ...patch, id: a.id, projectId: a.projectId });
+  }
+  await tx.done;
 }
 
 export async function deleteAsset(id: string): Promise<void> {
