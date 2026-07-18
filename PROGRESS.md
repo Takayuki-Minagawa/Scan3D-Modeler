@@ -3,19 +3,19 @@
 **このファイルは開発の中断・再開のための引き継ぎ台帳です。**
 作業を再開するときは、①このファイル ②[Webアプリ構築_作業計画.md](Webアプリ構築_作業計画.md) ③`git log` の3つを読めば状況を把握できます。作業を進めたら必ずこのファイルを更新してください。
 
-最終更新: 2026-07-12(セッション4: 公開UI・多言語対応)
+最終更新: 2026-07-18(追加機能・ライセンス対応)
 
 ---
 
 ## 現在地
 
-**フェーズ1(基盤+パイプライン貫通)を実装中。PR #1 のレビュー指摘は3巡目(P1×1, P2×8, P3×1)まで対応済み。公開UIとして日本語/英語、ライト/ダークテーマ、簡易マニュアルを追加済み。**
-アプリ骨格・ジョブ再開基盤・画像取込・デモパイプライン・ビューア・出力までが動作確認済み。
-実再構成(SfM/MVS/Poisson/TetGen のWASM化)は**フェーズ0検証が未着手**のため、スタブ+合成デモで代替中。
+**フェーズ1(基盤+パイプライン貫通)を実装中。追加計画のA-1〜A-6、B-1〜B-4、C-1〜C-8を実装し、フェーズ0の再現可能な環境診断まで着手済み。**
+MITライセンス・依存ライセンス検査、容量保全、保存サムネイル/EXIF、2点スケール、COI対応PWA、ビューアのコード分割が入った。
+実再構成(OpenMVG/自前MVS/PoissonRecon/Manifold/fTetWild のWASM化)は**CMake/Emscripten未導入のためソースビルド未実施**で、引き続きスタブ+合成デモで代替中。
 
 ```
 cd app && npm install && npm run dev   # http://localhost:5173
-npm run build                          # 型チェック+本番ビルド
+npm run build                          # ライセンス検査+型チェック+本番ビルド+PWA precache生成
 ```
 
 ## 作業計画との対応表
@@ -24,19 +24,19 @@ npm run build                          # 型チェック+本番ビルド
 |---|---|---|
 | 1A-1 雛形+COOP/COEP+CI | ✅ | `app/vite.config.ts`, `.github/workflows/ci.yml` |
 | 1A-2 プロジェクト管理 | ✅ | `app/src/db/projects.ts`, `app/src/ui/ProjectList.tsx`(使用書§7の項目。材料/解析目的は前提P5により除外) |
-| 1A-3 ZIPエクスポート/インポート | ✅ | `app/src/export/zip.ts`(インポート時に全ID振り直し) |
+| 1A-3 ZIPエクスポート/インポート | ✅ | `app/src/export/zip.ts`(インポート時に全ID/校正由来を振り直し、runtime schemaを検証) |
 | 1A-4 ジョブ基盤(進捗/中断/再開) | ✅ | `app/src/jobs/runner.ts`。checkpointをIndexedDB永続化。リロード後も「続きから再開」動作を実機確認済み |
 | 1A-5 段階データ履歴モデル | ✅ | `app/src/db/stages.ts`(追記のみ、seq連番。使用書§25) |
 | 1B-1 カメラ撮影UI | ✅(コード) | `app/src/capture/CapturePanel.tsx`。デバイス選択(スマホ/USB/内蔵)・静止画・録画。**実カメラでの動作確認は未実施**(検証環境にカメラなし) |
-| 1B-2 ファイル取込 | ✅ | `app/src/capture/ImportPanel.tsx` |
+| 1B-2 ファイル取込 | ✅ | `app/src/capture/ImportPanel.tsx`。原画+256pxサムネイル+EXIFを保存し、未知形式は原画を保持して個別スキップ |
 | 1B-3 キーフレーム抽出+ブレ判定 | ✅(コード) | `app/src/capture/frameExtract.ts` + `workers/blur.worker.ts`。1フレーム毎checkpoint。**実動画での動作確認は未実施** |
-| 1B-4 画像一覧・除外UI | ✅ | `app/src/capture/Gallery.tsx` |
+| 1B-4 画像一覧・除外UI | ✅ | `app/src/capture/Gallery.tsx`。一覧はサムネイルのみ、詳細で原画/EXIFを遅延表示 |
 | 1C-1〜3 SfM/MVS/サーフェス | 🔲 スタブのみ | `app/src/pipeline/reconstructStub.ts` にIF定義。**フェーズ0(WASM移植検証)が先** |
-| 1C-4 スケール設定(2点間) | 🔲 未着手 | ビューアでの2点選択UIが必要。プロジェクト設定に方式のみ記録済み |
-| 1D 3Dビューア | ✅ | `app/src/viewer/threeView.ts`。点群/メッシュ/タッチ対応/フィット |
+| 1C-4 スケール設定(2点間) | ✅ | `viewer/ViewerPanel.tsx`, `viewer/scale.ts`。レイキャスト/座標入力→実測距離→由来付き倍率保存。別再構成系列へ誤適用しない |
+| 1D 3Dビューア | ✅ | `app/src/viewer/threeView.ts`。点群/メッシュ/タッチ/フィット/計測、遅延読込 |
 | 1E 形状クリーニング | 🔲 未着手 | フェーズ0の後 |
-| 1F-1〜2 四面体メッシュ | 🔲 スタブのみ | TetGen WASM移植待ち |
-| 1F-3 出力 | 🔶 部分 | PLY/STL/ZIP実装済み(`app/src/export/formats.ts`)。MSH/VTU/INPは実メッシュ実装後 |
+| 1F-1〜2 四面体メッシュ | 🔲 スタブのみ | PoissonRecon→Manifold→fTetWildのWASM検証待ち |
+| 1F-3 出力 | 🔶 部分 | PLY/STL/ZIP実装済み。座標系列一致時のみ校正倍率をPLY/STLへ適用。MSH/VTU/INPは実メッシュ実装後 |
 
 凡例: ✅完了 / 🔶部分完了 / 🔲未着手
 
@@ -157,24 +157,60 @@ npm run build                          # 型チェック+本番ビルド
 - `npm run typecheck`、`npm run build` 成功。`npm audit` は脆弱性0件、`git diff --check` 成功
 - 本番ビルドに `dist/favicon.svg` が含まれることを確認
 
+## 追加機能・ライセンス対応(2026-07-18)
+
+- **A-1〜A-6**: MIT `LICENSE` を追加し、README/package.json/配布物を統一。production npm依存とvendored/WASM由来コードの許可ライセンスをビルド/CIで検査し、`third-party-licenses.txt` とリポジトリLICENSEをdistへ同梱
+- **B-1〜B-4**: MIT配布方針と両立しない同梱候補を計画から除外。OpenMVG(MPL-2.0)→自前MVS(MIT)→PoissonRecon(MIT)→Manifold(Apache-2.0)→fTetWild(MPL-2.0)へ検証経路を更新。libiglはMPLコアだけを候補とする
+- **C-1/C-8**: `navigator.storage.estimate()/persist()` の容量・永続保存UI、80%警告、プロジェクト別概算、ZIP退避/個別削除導線を追加。撮影/取込/ジョブ中もプロジェクト画面で確認可能
+- **C-2/C-6**: 原画と256px JPEGサムネイルをatomic保存。ギャラリーはサムネイルだけを常時読み、原画は詳細時に遅延読込。JPEG EXIFの寸法・日時・カメラ・焦点・撮像素子推定とSfM用`focalPx`候補を保存/表示
+- **C-3**: 点群/サーフェスの2点選択または座標入力と実測距離からスケールを保存。元段階は不変。校正元stage/assetを記録し、別系列の表示/PLY/STLへ古い倍率を適用しない
+- **C-4/C-5**: COI用Service WorkerとPWAを統合。build時に全配布アセットをhash付きprecacheへ注入し、初回準備後はオフライン起動可能。更新は作業中に強制reloadせず、明示操作で切替
+- **C-7**: Three.jsビューアを`React.lazy`で分離。初期chunkを約748KBから約283KBへ縮小（viewer chunkは別読込）
+- **フェーズ0着手**: `scripts/check-phase0-toolchain.sh` と `docs/phase0/` を追加。Node/npm/Gitは確認済み、CMake/Emscripten不足を記録。0-3〜0-5の実WASMビルドは固定ツールチェーン導入後に継続
+
+### 追加対応の検証
+
+- `npm run licenses:check` / `npm run licenses:verify` / `npm run typecheck` / `npm run build`
+- PWA precacheへ13配布資源が注入されることを確認。新規originで初回導入→明示再読込→`WASM並列: 有効`、オンラインでプロジェクト作成/デモ生成、サーバ停止後のオフライン再読込と遅延viewer表示をブラウザ確認。console error/warning 0件
+- ブラウザで座標A=(0,0,0)、B=(10,0,0)、実測25mmを入力し、倍率2.5の保存、表示距離25mm、校正由来付きZIP(846.9KB)出力まで確認
+- ZIP importはProject/Stage/Asset/scaleCalibrationをruntime検証し、壊れた列挙値・非有限数・参照切れ・thumbnail関係をDB transaction前に拒否
+- `npm audit`、`git diff --check`、依存ライセンスnoticeの再生成差分なしを確認
+
+## PR #2 レビュー対応(2026-07-18)
+
+LGTM付きレビューの軽微な提案4件を確認し、次のとおり反映した。
+
+| 指摘 | 対応 |
+|---|---|
+| 全precacheのうち1件失敗でService Worker install全体が失敗する | `index.html` から起動必須module/CSSを抽出し、HTML/JS/CSSの4資源だけを`cache.addAll`で原子的に保存。lazy chunk・worker・アイコン・ライセンス文書の9資源はアプリ起動後のアイドル時に個別保存し、1件失敗しても導入を継続。データ節約/2G回線では暖機を省略して利用時キャッシュへフォールバック |
+| 校正単位とプロジェクト単位の潜在的不整合 | プロジェクト単位は作成後不変であることを型・コメントで明示し、`updateProjectScaleCalibration`でも単位一致を必須化。ZIP import側の既存検証と二重に防御 |
+| CIでライセンス検査が二重実行 | CIは`npm run build`へ一本化。build内の`licenses:check`/`licenses:verify`は維持 |
+| LICENSE本文を持たない依存でverifyが停止する運用 | 配布条件を確認できない依存は意図的にbuildを止める方針と、依存追加時の`licenses:generate`手順をREADME日英へ追記 |
+
+### PR #2 レビュー対応後の検証
+
+- `npm run build`成功。生成SWは shell 4資源 / optional 9資源を分離
+- Node VMでService Workerを実行し、install時はshellだけを保存すること、optional 1件を意図的に失敗させても暖機処理が完了することを確認
+- source/dist両Service Workerの`node --check`成功、`npm audit` 0件、`git diff --check`成功
+
 ## 未確認・既知の課題
 
 - [ ] 実カメラ(スマホ/USB/内蔵)での撮影動作 — HTTPSまたはlocalhostが必要。Android実機は `adb reverse tcp:5173 tcp:5173` で localhost 接続可(レビュー対応のstream世代管理・録画チャンク分離も実機未確認)
 - [x] 実動画でのフレーム抽出 — 合成webm(canvas+MediaRecorder)でduration=Infinity経路含め確認済み。実カメラ撮影動画では未確認
 - [ ] Web Locks非対応ブラウザ(Safari 15.3以前等)では単一実行保証がないため従来動作(単一タブ想定)にフォールバック
 - [ ] iOS Safari(MediaRecorder/ImageCapture差異)
-- [ ] バンドル748KB(Three.js) — コード分割は後回しで可
-- [ ] Gallery: 画像を全件Blob URL化するためフレーム数百枚時に重い可能性 → サムネイル保存の検討
+- [ ] PWA更新時の複数タブ長時間併用 — 旧cache保持/sole-client cleanupはコードレビュー済み。実端末で更新を跨ぐ長時間試験は継続QA
+- [x] バンドル748KB(Three.js) — ビューアを遅延読込し初期chunk約283KBへ分割
+- [x] Galleryの全原画Blob URL — 256pxサムネイルを別アセットとして保存し一覧で利用
 - [ ] 大容量ZIPのメモリ使用(fflateを全メモリで使用) → ストリーミング化の検討
-- [ ] IndexedDBの容量制限に対する警告UI(navigator.storage.estimate)
+- [x] IndexedDBの容量制限に対する警告UI(navigator.storage.estimate/persist)
 
 ## 次にやること(優先順)
 
-1. **フェーズ0の技術検証**(作業計画§3): OpenMVG(または代替)のWASMビルド試行が最重要。
-   成否によって 1C の実装方式が決まる。検証結果は `docs/phase0/` に記録すること
-2. 1C-4 スケール設定UI(ビューアで2点選択 → 実測距離入力 → 点群スケーリング)
-3. 検証用の実撮影データ(使用書§30の対象物)での 1B 実機確認
-4. GitHub Pages等への配置(COOP/COEPヘッダ: Netlify推奨 or coi-serviceworker導入)
+1. **フェーズ0の技術検証を継続**: 固定Emscripten/CMake環境でOpenMVG最小ターゲットのWASMビルド、Worker実行、メモリ、IndexedDB保存を検証
+2. 自前MVSの最小品質試験とPoissonRecon→Manifold→fTetWildの貫通試験。記録は`docs/phase0/`へ追記
+3. 検証用の実撮影データ(使用書§30の対象物)とAndroid/実カメラで1B・0-7・0-8を確認
+4. C-9以降（大容量ZIPストリーミング、OPFS、複製、スクリーンショット）はフェーズ0の成果物サイズを踏まえて再優先付け
 
 ## 再開手順(使用制限などで中断した場合)
 

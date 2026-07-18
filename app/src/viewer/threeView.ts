@@ -3,6 +3,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 type ViewerTheme = 'light' | 'dark';
 
+export type MeasurementPoint = readonly [number, number, number];
+export type MeasurementListener = (points: MeasurementPoint[]) => void;
+
 /**
  * Canvas は CSS の色変数を直接参照できないため、アプリの data-theme と同じ
  * タイミングで Three.js 側の配色も切り替える。ライト配色では背景より十分濃い
@@ -14,6 +17,7 @@ const VIEWER_PALETTE: Record<
     background: THREE.ColorRepresentation;
     point: THREE.ColorRepresentation;
     mesh: THREE.ColorRepresentation;
+    measurement: THREE.ColorRepresentation;
     gridCenter: THREE.ColorRepresentation;
     grid: THREE.ColorRepresentation;
     hemisphereSky: THREE.ColorRepresentation;
@@ -26,6 +30,7 @@ const VIEWER_PALETTE: Record<
     background: 0x0b0f14,
     point: 0x4cc2ff,
     mesh: 0x93a8bd,
+    measurement: 0xffc857,
     gridCenter: 0x3a4a5f,
     grid: 0x232d3a,
     hemisphereSky: 0xdfe8ff,
@@ -37,6 +42,7 @@ const VIEWER_PALETTE: Record<
     background: 0xe5ebf3,
     point: 0x006fa8,
     mesh: 0x3f6482,
+    measurement: 0xb85800,
     gridCenter: 0x6d8195,
     grid: 0xb5c2ce,
     hemisphereSky: 0xffffff,
@@ -60,7 +66,16 @@ export class ThreeView {
   private directionalLight: THREE.DirectionalLight;
   private points: THREE.Points | null = null;
   private mesh: THREE.Mesh | null = null;
+  private measurementGroup = new THREE.Group();
+  private measurementPoints: THREE.Vector3[] = [];
+  private measurementListener: MeasurementListener | null = null;
+  private measurementEnabled = false;
+  private displayScale = 1;
+  private modelRadius = 0;
+  private pointerStart: { id: number; x: number; y: number } | null = null;
+  private raycaster = new THREE.Raycaster();
   private grid: THREE.GridHelper;
+  private axes: THREE.AxesHelper;
   private raf = 0;
   private resizeObserver: ResizeObserver;
   private themeObserver: MutationObserver | null = null;
@@ -69,6 +84,12 @@ export class ThreeView {
   constructor(private container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    this.renderer.domElement.tabIndex = 0;
+    this.renderer.domElement.setAttribute('role', 'img');
+    this.renderer.domElement.setAttribute(
+      'aria-label',
+      '3D model viewer. Use the coordinate fields below for keyboard scale calibration.',
+    );
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
@@ -86,8 +107,13 @@ export class ThreeView {
 
     this.grid = new THREE.GridHelper(200, 20, 0x3a4a5f, 0x232d3a);
     this.scene.add(this.grid);
-    const axes = new THREE.AxesHelper(30);
-    this.scene.add(axes);
+    this.axes = new THREE.AxesHelper(1);
+    this.scene.add(this.axes);
+    this.scene.add(this.measurementGroup);
+
+    this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown);
+    this.renderer.domElement.addEventListener('pointerup', this.handlePointerUp);
+    this.renderer.domElement.addEventListener('pointercancel', this.handlePointerCancel);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -136,6 +162,12 @@ export class ThreeView {
     if (pointMaterial instanceof THREE.PointsMaterial) pointMaterial.color.set(palette.point);
     const meshMaterial = this.mesh?.material;
     if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.set(palette.mesh);
+    this.measurementGroup.traverse((object) => {
+      const material = (object as THREE.Mesh | THREE.Line).material;
+      if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.LineBasicMaterial) {
+        material.color.set(palette.measurement);
+      }
+    });
   }
 
   /** r169 の GridHelper は色のsetterを公開していないため、位置を保って差し替える。 */
@@ -147,9 +179,11 @@ export class ThreeView {
     if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
     else material.dispose();
 
-    this.grid = new THREE.GridHelper(200, 20, palette.gridCenter, palette.grid);
+    const displayedRadius = Math.max(this.modelRadius * this.displayScale, 0.25);
+    this.grid = new THREE.GridHelper(displayedRadius * 4, 20, palette.gridCenter, palette.grid);
     this.grid.position.copy(position);
     this.scene.add(this.grid);
+    this.axes.scale.setScalar(displayedRadius * 0.6);
   }
 
   private resize(): void {
@@ -171,15 +205,17 @@ export class ThreeView {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       geo.computeBoundingSphere();
-      const radius = geo.boundingSphere?.radius ?? 50;
+      const radius = geo.boundingSphere?.radius ?? 1;
       const mat = new THREE.PointsMaterial({
         color: VIEWER_PALETTE[this.theme].point,
-        size: Math.max(0.05, radius * 0.006),
+        size: Math.max(1e-6, radius * this.displayScale * 0.006),
         sizeAttenuation: true,
       });
       this.points = new THREE.Points(geo, mat);
+      this.points.scale.setScalar(this.displayScale);
       this.scene.add(this.points);
     }
+    this.updateGeometryScaleHelpers();
   }
 
   setMesh(positions: Float32Array | null, indices?: Uint32Array): void {
@@ -202,13 +238,147 @@ export class ThreeView {
         roughness: 0.75,
       });
       this.mesh = new THREE.Mesh(geo, mat);
+      this.mesh.scale.setScalar(this.displayScale);
       this.scene.add(this.mesh);
+      geo.computeBoundingSphere();
     }
+    this.updateGeometryScaleHelpers();
   }
 
   setVisibility(target: 'points' | 'mesh', visible: boolean): void {
     const obj = target === 'points' ? this.points : this.mesh;
     if (obj) obj.visible = visible;
+  }
+
+  /**
+   * 元の再構成座標を上書きせず、表示時だけ project.unit / model unit の倍率を適用する。
+   * ZIP内の生データと段階履歴は不変のまま、校正値を何度でも見直せる。
+   */
+  setScale(scale: number): void {
+    this.displayScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    this.points?.scale.setScalar(this.displayScale);
+    this.mesh?.scale.setScalar(this.displayScale);
+    this.updateGeometryScaleHelpers();
+    this.renderMeasurement();
+  }
+
+  private updateGeometryScaleHelpers(): void {
+    const radii = [
+      this.points?.geometry.boundingSphere?.radius,
+      this.mesh?.geometry.boundingSphere?.radius,
+    ].filter((radius): radius is number => typeof radius === 'number' && radius > 0);
+    this.modelRadius = radii.length > 0 ? Math.max(...radii) : 0;
+    const pointMaterial = this.points?.material;
+    if (pointMaterial instanceof THREE.PointsMaterial) {
+      pointMaterial.size = Math.max(
+        1e-6,
+        Math.max(this.modelRadius, 1e-3) * this.displayScale * 0.006,
+      );
+    }
+    this.replaceGrid(VIEWER_PALETTE[this.theme]);
+  }
+
+  setMeasurementEnabled(enabled: boolean, listener?: MeasurementListener): void {
+    this.measurementEnabled = enabled;
+    if (listener) this.measurementListener = listener;
+    this.renderer.domElement.style.cursor = enabled ? 'crosshair' : '';
+    if (!enabled) this.pointerStart = null;
+  }
+
+  setMeasurementPoints(points: MeasurementPoint[]): void {
+    this.measurementPoints = points.slice(0, 2).map((point) => new THREE.Vector3(...point));
+    this.renderMeasurement();
+  }
+
+  clearMeasurement(): void {
+    this.measurementPoints = [];
+    this.renderMeasurement();
+    this.measurementListener?.([]);
+  }
+
+  private handlePointerDown = (event: PointerEvent): void => {
+    if (!this.measurementEnabled || event.button !== 0) return;
+    this.pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+
+  private handlePointerCancel = (): void => {
+    this.pointerStart = null;
+  };
+
+  private handlePointerUp = (event: PointerEvent): void => {
+    const start = this.pointerStart;
+    this.pointerStart = null;
+    if (!this.measurementEnabled || !start || start.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(pointer, this.camera);
+    this.raycaster.params.Points = {
+      threshold: Math.max(1e-6, this.modelRadius * this.displayScale * 0.012),
+    };
+    const targets: THREE.Object3D[] = [];
+    if (this.mesh?.visible) targets.push(this.mesh);
+    if (this.points?.visible) targets.push(this.points);
+    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    if (!hit) return;
+
+    // Points.raycastのhit.pointは頂点ではなくray上の最近点なので、indexから
+    // 実頂点を取得する。Mesh交点だけをworld→local変換する。
+    let rawPoint: THREE.Vector3;
+    if (hit.object === this.points && hit.index !== undefined) {
+      const position = this.points.geometry.getAttribute('position');
+      rawPoint = new THREE.Vector3(
+        position.getX(hit.index),
+        position.getY(hit.index),
+        position.getZ(hit.index),
+      );
+    } else {
+      rawPoint = hit.object.worldToLocal(hit.point.clone());
+    }
+    this.measurementPoints =
+      this.measurementPoints.length >= 2 ? [rawPoint] : [...this.measurementPoints, rawPoint];
+    this.renderMeasurement();
+    this.measurementListener?.(
+      this.measurementPoints.map((point) => [point.x, point.y, point.z] as const),
+    );
+  };
+
+  private renderMeasurement(): void {
+    while (this.measurementGroup.children.length > 0) {
+      const child = this.measurementGroup.children[0];
+      this.measurementGroup.remove(child);
+      const drawable = child as THREE.Mesh | THREE.Line;
+      drawable.geometry?.dispose();
+      const material = drawable.material;
+      if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+      else material?.dispose();
+    }
+
+    const color = VIEWER_PALETTE[this.theme].measurement;
+    const markerRadius = Math.max(this.modelRadius * 0.012, 1e-6);
+    for (const point of this.measurementPoints) {
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(markerRadius, 16, 12),
+        new THREE.MeshBasicMaterial({ color, depthTest: false }),
+      );
+      marker.position.copy(point);
+      marker.renderOrder = 10;
+      this.measurementGroup.add(marker);
+    }
+    if (this.measurementPoints.length === 2) {
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(this.measurementPoints),
+        new THREE.LineBasicMaterial({ color, depthTest: false }),
+      );
+      line.renderOrder = 10;
+      this.measurementGroup.add(line);
+    }
+    this.measurementGroup.scale.setScalar(this.displayScale);
   }
 
   /** 表示中オブジェクトにカメラをフィット */
@@ -247,11 +417,20 @@ export class ThreeView {
     this.themeObserver = null;
     this.setPointCloud(null);
     this.setMesh(null);
+    this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
+    this.renderer.domElement.removeEventListener('pointerup', this.handlePointerUp);
+    this.renderer.domElement.removeEventListener('pointercancel', this.handlePointerCancel);
+    this.measurementListener = null;
+    this.clearMeasurement();
+    this.scene.remove(this.measurementGroup);
     this.scene.remove(this.grid);
     this.grid.geometry.dispose();
     const gridMaterial = this.grid.material;
     if (Array.isArray(gridMaterial)) gridMaterial.forEach((entry) => entry.dispose());
     else gridMaterial.dispose();
+    this.scene.remove(this.axes);
+    this.axes.geometry.dispose();
+    (this.axes.material as THREE.Material).dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

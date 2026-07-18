@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// SharedArrayBuffer(将来のWASMスレッド並列化)に必要なヘッダ。
-// 本番ホスティング側でも同じヘッダ設定が必要(作業計画 §2.2 R6 参照)。
+// SharedArrayBuffer(将来のWASMスレッド並列化)に必要な開発/preview用ヘッダ。
+// 静的本番配布ではcoi-serviceworker.jsが同等の応答ヘッダを付与する。
 const crossOriginIsolation = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',

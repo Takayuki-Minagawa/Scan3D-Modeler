@@ -11,14 +11,31 @@ export interface ApproxSize {
 export type CaptureMethod = 'video' | 'photos' | 'mixed';
 export type ScaleMethod = 'marker' | 'knownDimension' | 'twoPoint' | 'later';
 
+/** 2点間の既知寸法から求めた、project.unit / model unit の校正情報。 */
+export interface ScaleCalibration {
+  factor: number;
+  modelDistance: number;
+  measuredDistance: number;
+  unit: Unit;
+  pointA: [number, number, number];
+  pointB: [number, number, number];
+  /** 校正時の座標系を表す段階。再構成をやり直した後の誤適用を防ぐ。 */
+  sourceStageId?: string;
+  /** 段階を持たない旧形式/単体アセット用の補助的な由来情報。 */
+  sourceAssetId?: string;
+  updatedAt: number;
+}
+
 export interface Project {
   id: string;
   name: string;
   objectName: string;
+  /** 作成後は変更しない。校正値とZIPの単位整合性を保つ基準単位。 */
   unit: Unit;
   approxSize: ApproxSize;
   captureMethod: CaptureMethod;
   scaleMethod: ScaleMethod;
+  scaleCalibration?: ScaleCalibration;
   note?: string;
   createdAt: number;
   updatedAt: number;
@@ -52,7 +69,39 @@ export interface Stage {
   createdAt: number;
 }
 
-export type AssetKind = 'image' | 'video' | 'frame' | 'pointcloud' | 'mesh' | 'json';
+export type AssetKind =
+  | 'image'
+  | 'video'
+  | 'frame'
+  | 'thumbnail'
+  | 'pointcloud'
+  | 'mesh'
+  | 'json';
+
+/**
+ * SfM の内部パラメータ初期値として利用できる、画像由来のカメラ情報。
+ * focalPx はまだ再構成へ渡さないが、EXIFから根拠を持って推定できた場合だけ保存する。
+ */
+export interface CameraIntrinsicsHint {
+  focalLengthMm?: number;
+  focalLength35mm?: number;
+  sensorWidthMm?: number;
+  sensorHeightMm?: number;
+  focalPx?: number;
+  focalPxSource?: 'exifFocalPlaneResolution' | 'exif35mmEquivalent';
+}
+
+/** 画像アセットに付随する、言語やUIに依存しない撮影メタデータ。 */
+export interface ImageAssetMetadata {
+  widthPx?: number;
+  heightPx?: number;
+  /** EXIFは通常タイムゾーンを持たないため、ローカル日時文字列として保存する。 */
+  capturedAt?: string;
+  cameraMake?: string;
+  cameraModel?: string;
+  orientation?: number;
+  intrinsics?: CameraIntrinsicsHint;
+}
 
 export interface AssetMeta {
   id: string;
@@ -66,6 +115,12 @@ export interface AssetMeta {
   /** パイプライン入力から除外(ユーザー操作または自動ブレ判定) */
   excluded?: boolean;
   quality?: { blur?: number; sharp?: boolean };
+  /** image/frame に対応する一覧表示用JPEGサムネイル。旧データでは未設定。 */
+  thumbnailAssetId?: string;
+  /** thumbnail から原画への逆参照。 */
+  sourceAssetId?: string;
+  /** EXIFおよびデコード結果から得た画像・カメラ情報。 */
+  image?: ImageAssetMetadata;
   meta?: Record<string, unknown>;
   createdAt: number;
 }

@@ -11,15 +11,16 @@
 
 | 機能 | 状況 |
 | --- | --- |
-| プロジェクト管理・履歴保持 | ブラウザのIndexedDBに保存 |
-| 画像・動画の取込、ブレ判定、動画フレーム抽出 | 実装済み。抽出ジョブは一時停止・再開に対応 |
+| プロジェクト管理・履歴保持 | ブラウザのIndexedDBに保存。端末容量・プロジェクト別内訳・永続保存状態を表示 |
+| 画像・動画の取込、ブレ判定、動画フレーム抽出 | 実装済み。保存サムネイル、EXIF表示、抽出ジョブの一時停止・再開に対応 |
 | カメラ撮影UI（静止画・録画） | 実装済み。ただし実機カメラでの動作確認は未完了 |
-| 3Dビューア | 合成デモの点群・サーフェスを表示。タッチ操作に対応 |
-| 出力 | プロジェクトZIP、デモ形状由来のPLY/STLを出力 |
+| 3Dビューア | 合成デモの点群・サーフェスを表示。タッチ操作と2点間スケール校正に対応 |
+| 出力 | プロジェクトZIP、デモ形状由来のPLY/STLを出力。PLY/STLへ保存済みスケールを適用 |
+| オフライン利用 | PWAとしてインストール可能。初回準備後はアプリ本体をオフラインで起動可能 |
 | 表示言語・外観 | 日本語を標準とし、英語／ライト・ダークテーマへ切替可能 |
 | 簡易マニュアル | アプリ内で日本語・英語の手順を表示 |
 | 実撮影画像の3D再構成（SfM/MVS/Poisson等） | 未実装。現在はデモ生成で代替 |
-| スケール設定、四面体メッシュ、MSH/VTU/INP出力 | 未実装 |
+| 四面体メッシュ、MSH/VTU/INP出力 | 未実装 |
 | FEM解析 | 対象外。外部ソルバで行ってください |
 
 画面上で「デモ」と表示される形状・データは、実際に取り込んだ撮影データから生成されたものではありません。
@@ -54,21 +55,29 @@ npm run typecheck
 1. プロジェクトを作成します。
 2. 「取込」画面から画像・動画を追加するか、同じ画面の「カメラ撮影」でカメラを許可して素材を追加します。
 3. 「パイプライン」で**デモ生成**を実行すると、後段のビューアと出力の流れを確認できます。
-4. 「ビューア」で点群・サーフェスを確認します。ここで表示されるデモ結果は実データの再構成結果ではありません。
-5. 「出力」からプロジェクトZIPまたは対応するデータ形式を保存します。
+4. 「ビューア」で点群・サーフェスを確認します。形状上の2点（またはX/Y/Z座標）と実測距離を指定すると、現在の再構成系列のスケールを設定できます。ここで表示されるデモ結果は実データの再構成結果ではありません。
+5. 「出力」からプロジェクトZIPまたは対応するデータ形式を保存します。校正済みPLY/STLには倍率を適用しますが、IndexedDBとZIP内の元段階データは上書きしません。
+
+再構成をやり直して座標系列が変わると、以前の校正は自動適用されません。ビューアで2点を選び直してください。ストレージ使用率が高い場合は、プロジェクトZIPを退避してから不要なプロジェクトを削除できます。
 
 アプリ内の「簡易マニュアル」では、同じ基本手順と制約を日本語・英語で確認できます。表示言語とライト／ダークテーマは画面上の切替ボタンから変更できます。
 
 ## 技術的な注意
 
 - アプリはサーバを必要としない静的構成です。長時間ジョブはブラウザ内のWeb WorkerとIndexedDBを利用します。
-- 実再構成用のWASMコンポーネントはまだ同梱していません。将来、SharedArrayBufferを使う並列WASMを追加する場合は、ホスティングでCOOP/COEPヘッダの設定が必要になる可能性があります。
+- 実再構成用のWASMコンポーネントはまだ同梱していません。配布版はCOOP/COEP相当の応答を行うService Workerを備え、`crossOriginIsolated` の状態を画面に表示します。
+- PWAは起動に必須のHTML/JavaScript/CSSだけを原子的にキャッシュし、遅延読込chunk・アイコン・ライセンス文書はアプリ起動後のアイドル時に個別失敗を許容して追加保存します。データ節約設定または低速回線では追加保存を行わず、利用時に保存します。更新版は作業中に強制再読込せず、画面の更新操作を選んだ時に切り替えます。オフライン利用は最初のオンライン読込と準備完了後に有効です。
+- 3Dビューアは遅延読込され、初期画面のJavaScriptからThree.jsを分離しています（現ビルドの初期chunk約283KB、viewer chunk約524KB）。
 - ブラウザのストレージ削除、シークレットモードの終了、容量制限などにより、ローカルデータが失われる場合があります。
 - 既知の制約や開発中の項目は、公開利用の前にコードとリリースノートで確認してください。
 
 ## ライセンス
 
-現時点で、このリポジトリにはライセンスファイルが含まれていません。利用、複製、改変、再配布に関する条件は、ライセンスが追加されるまで明示されていません。
+本リポジトリの独自コードは [MIT License](LICENSE) で提供します。Copyright (c) 2026 Takayuki Minagawa.
+
+ブラウザ向け配布物には、それぞれのライセンスに従う第三者ソフトウェアが含まれます。著作権表示とライセンス本文は [第三者ソフトウェアライセンス一覧](app/public/third-party-licenses.txt) を参照してください。
+
+本番依存を追加した場合は `npm run licenses:generate` でnoticeを再生成してください。依存パッケージにライセンス本文ファイルが同梱されていない場合、またはnoticeが依存関係と一致しない場合は、配布条件を確認できるまで `npm run build` が意図的に失敗します。
 
 ---
 
@@ -83,15 +92,16 @@ Scan2FEM is an experimental, static web application for organizing photos and vi
 
 | Capability | Current status |
 | --- | --- |
-| Project management and history | Stored in browser IndexedDB |
-| Image/video import, blur scoring, and video frame extraction | Implemented; extraction jobs can pause and resume |
+| Project management and history | Stored in browser IndexedDB, with device usage, per-project breakdown, and persistence status |
+| Image/video import, blur scoring, and video frame extraction | Implemented with saved thumbnails and EXIF display; extraction jobs can pause and resume |
 | Camera capture UI (photos and recordings) | Implemented, but not yet validated with physical cameras |
-| 3D viewer | Displays synthetic demo point clouds and surfaces; touch-friendly |
-| Export | Project ZIP and PLY/STL derived from demo geometry |
+| 3D viewer | Displays synthetic demo point clouds and surfaces; supports touch and two-point scale calibration |
+| Export | Project ZIP and PLY/STL derived from demo geometry; saved scale is applied to PLY/STL |
+| Offline use | Installable as a PWA; after initial preparation, the app shell can start offline |
 | Language and appearance | Japanese by default; English and light/dark themes can be selected |
 | Quick guide | Available in the app in Japanese and English |
 | 3D reconstruction from real captures (SfM/MVS/Poisson, etc.) | Not implemented; demo generation is used instead |
-| Scale setting, tetrahedral meshing, MSH/VTU/INP export | Not implemented |
+| Tetrahedral meshing and MSH/VTU/INP export | Not implemented |
 | FEM analysis | Out of scope; use an external solver |
 
 Anything labeled “Demo” in the application is not generated from imported capture data.
@@ -126,18 +136,26 @@ Camera APIs require a secure context (HTTPS or `localhost`). Compatibility with 
 1. Create a project.
 2. Add images or videos from **Import**, or allow camera access in the **Camera capture** section on the same screen.
 3. Run **Generate demo** in **Pipeline** to inspect the downstream viewer and export flow.
-4. Inspect the point cloud and surface in **Viewer**. Demo results are not reconstructions of your input data.
-5. Save a project ZIP or an available data format from **Export**.
+4. Inspect the point cloud and surface in **Viewer**. Pick two geometry points (or enter X/Y/Z coordinates) and their measured distance to calibrate the current reconstruction series. Demo results are not reconstructions of your input data.
+5. Save a project ZIP or an available data format from **Export**. Calibrated PLY/STL receives the scale factor, while original stage data in IndexedDB and ZIP stays unchanged.
+
+After reconstruction is rerun into a different coordinate series, an older calibration is not applied automatically; pick two points again. When storage usage is high, export a project ZIP before deleting unneeded projects.
 
 The in-app quick guide presents the same workflow and limitations in Japanese and English. Use the on-screen controls to change the language and light/dark theme.
 
 ## Technical notes
 
 - This is a serverless static application. Long-running jobs use browser Web Workers and IndexedDB.
-- No WASM reconstruction component is bundled yet. If future work adds threaded WASM using SharedArrayBuffer, the host may need COOP/COEP response headers.
+- No WASM reconstruction component is bundled yet. The production app includes a Service Worker that supplies COOP/COEP-equivalent responses and reports `crossOriginIsolated` status in the UI.
+- The PWA atomically precaches only the HTML/JavaScript/CSS required to boot. Lazy chunks, icons, and license documents are cached independently while the app is idle, so an optional download failure does not block installation. That warmup is skipped on data-saving or slow connections and those resources are cached when used instead. An update does not force-reload active work; it switches only after the on-screen update action is selected. Offline use becomes available after the first online load and preparation.
+- The 3D viewer is loaded on demand, keeping Three.js out of the initial project-list JavaScript (about 283 KB for the current initial chunk and 524 KB for the viewer chunk).
 - Browser storage can be lost through data clearing, private-browsing expiration, or storage limits.
 - Review the source code and release notes before relying on an unfinished feature in a public deployment.
 
 ## License
 
-No license file is currently included in this repository. Terms for use, copying, modification, and redistribution are not stated until a license is added.
+Original code in this repository is available under the [MIT License](LICENSE). Copyright (c) 2026 Takayuki Minagawa.
+
+The browser distribution includes third-party software under its respective licenses. See the [third-party software notices](app/public/third-party-licenses.txt) for copyright notices and license texts.
+
+After adding a production dependency, regenerate the notices with `npm run licenses:generate`. `npm run build` intentionally fails until distribution terms can be verified when a package does not include its license text or when the generated notices no longer match the dependency tree.

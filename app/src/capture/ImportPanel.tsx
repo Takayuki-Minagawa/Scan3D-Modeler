@@ -7,6 +7,7 @@ import { onJobsChanged, startJob } from '../jobs/runner';
 import { jobText } from '../jobs/text';
 import type { AssetMeta } from '../types';
 import { Section } from '../ui/common';
+import { prepareImageAsset } from './imageUtil';
 import { startFrameExtraction } from './startFrameExtraction';
 
 type ActiveExtractStatus = 'running' | 'paused';
@@ -136,32 +137,62 @@ export function ImportPanel(props: {
     try {
       let images = 0;
       const videos: Array<{ id: string; name: string }> = [];
+      const thumbnailFallbacks: string[] = [];
+      const failedFiles: string[] = [];
       for (const file of Array.from(files)) {
-        if (file.type.startsWith('image/')) {
-          await addAsset({
-            projectId: props.projectId,
-            kind: 'image',
-            name: file.name,
-            blob: file,
-            meta: { source: 'file' },
-          });
-          images++;
-        } else if (file.type.startsWith('video/')) {
-          const asset = await addAsset({
-            projectId: props.projectId,
-            kind: 'video',
-            name: file.name,
-            blob: file,
-            meta: { source: 'file' },
-          });
-          videos.push({ id: asset.id, name: asset.name });
+        try {
+          if (file.type.startsWith('image/')) {
+            let prepared: Awaited<ReturnType<typeof prepareImageAsset>> | undefined;
+            try {
+              prepared = await prepareImageAsset(file);
+            } catch {
+              // HEIC等の未対応形式でも原画自体は保持し、将来の再処理・ZIP退避を可能にする。
+              thumbnailFallbacks.push(file.name);
+            }
+            await addAsset({
+              projectId: props.projectId,
+              kind: 'image',
+              name: file.name,
+              blob: file,
+              thumbnail: prepared?.thumbnail,
+              image: prepared?.image,
+              meta: {
+                source: 'file',
+                width: prepared?.image.widthPx,
+                height: prepared?.image.heightPx,
+              },
+            });
+            images++;
+          } else if (file.type.startsWith('video/')) {
+            const asset = await addAsset({
+              projectId: props.projectId,
+              kind: 'video',
+              name: file.name,
+              blob: file,
+              meta: { source: 'file' },
+            });
+            videos.push({ id: asset.id, name: asset.name });
+          }
+        } catch {
+          // 1件の失敗で、同じ選択に含まれる他ファイルと先行保存済みデータを隠さない。
+          failedFiles.push(file.name);
         }
       }
       setStatus({
-        ja: `取込完了: 画像${images}枚 / 動画${videos.length}本`,
-        en: `Import complete: ${images} image(s) / ${videos.length} video(s)`,
+        ja:
+          `取込完了: 画像${images}枚 / 動画${videos.length}本` +
+          (thumbnailFallbacks.length > 0
+            ? ` / サムネイル未作成${thumbnailFallbacks.length}枚(原画は保存済み)`
+            : '') +
+          (failedFiles.length > 0 ? ` / 失敗${failedFiles.length}件: ${failedFiles.join('、')}` : ''),
+        en:
+          `Import complete: ${images} image(s) / ${videos.length} video(s)` +
+          (thumbnailFallbacks.length > 0
+            ? ` / ${thumbnailFallbacks.length} without thumbnails (originals saved)`
+            : '') +
+          (failedFiles.length > 0 ? ` / ${failedFiles.length} failed: ${failedFiles.join(', ')}` : ''),
       });
-      props.onImported();
+      if (images > 0 || videos.length > 0) props.onImported();
 
       if (images > 0) {
         // 取込画像の画質(ブレ)判定をバックグラウンドで実行

@@ -1,0 +1,9 @@
+[
+  {
+    "name": "coi-serviceworker",
+    "version": "0.1.7-derived",
+    "license": "MIT",
+    "repository": "https://github.com/gzuidhof/coi-serviceworker",
+    "licenseFile": "coi-serviceworker.LICENSE.txt"
+  }
+]
