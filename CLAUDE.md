@@ -25,6 +25,7 @@ npm run build      # tsc + vite build(コミット前に必ず通すこと)
 - 長時間処理は必ずジョブエンジン(`app/src/jobs/runner.ts`)に載せ、
   ループ内で `saveCheckpoint()` + `throwIfStopped()` を呼び、中断再開可能にする
 - 重い計算はWeb Workerへ。DOM依存処理(video等)のみメインスレッドのエンジンで行う
-- 実再構成(SfM/MVS/Poisson/TetGen)は `pipeline/reconstructStub.ts` のIFに合わせて実装する。
+- 実再構成(OpenMVG/自前MVS/PoissonRecon/Manifold/fTetWild)は `pipeline/reconstructStub.ts` のIFに合わせて実装する。
+  AGPL/GPLコンポーネントは同梱せず、MPL-2.0コンポーネントと推移依存のライセンスを検証する。
   フェーズ0のWASM検証が先行タスク
 - UI文言は日本語。合成デモデータには必ず「デモ」表示を付ける

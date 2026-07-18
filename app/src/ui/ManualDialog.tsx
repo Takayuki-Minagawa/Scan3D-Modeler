@@ -98,6 +98,12 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
                   'Use Generate demo in Pipeline to try the viewer and export flow.',
                 )}
               </li>
+              <li>
+                {tr(
+                  '「ビューア」で形状上の2点（または座標）と実測距離を指定すると、表示とPLY/STL出力のスケールを校正できます。',
+                  'In Viewer, pick two geometry points (or enter coordinates) and their measured distance to calibrate display and PLY/STL export scale.',
+                )}
+              </li>
               <li>{tr('「出力」からプロジェクトZIPや利用可能な形式を保存します。', 'Save a project ZIP or an available format from Export.')}</li>
             </ol>
           </section>
@@ -113,8 +119,8 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
               </li>
               <li>
                 {tr(
-                  '四面体メッシュ、MSH/VTU/INP出力、スケール設定は未実装です。',
-                  'Tetrahedral meshing, MSH/VTU/INP export, and scale setting are not implemented.',
+                  '四面体メッシュとMSH/VTU/INP出力は未実装です。2点スケールは座標系を校正する機能で、形状精度を保証するものではありません。',
+                  'Tetrahedral meshing and MSH/VTU/INP export are not implemented. Two-point scale calibrates the coordinate frame; it does not validate geometric accuracy.',
                 )}
               </li>
               <li>
@@ -130,8 +136,8 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
             <h3>{tr('データとカメラ', 'Data and camera')}</h3>
             <p>
               {tr(
-                'このアプリには画像・動画を受け取るバックエンドはなく、通常はブラウザのIndexedDBに保存されます。カメラはHTTPSまたはlocalhostが必要です。ブラウザのデータ削除やストレージ容量制限に備え、必要なプロジェクトはZIPでバックアップしてください。ZIPには実行中・一時停止中ジョブの再開状態は含まれません。',
-                'This app has no backend for receiving images or videos; data is normally stored in browser IndexedDB. Camera access requires HTTPS or localhost. Export a project ZIP to back up data against browser clearing or storage limits. ZIP files do not include resume state for in-progress or paused jobs.',
+                'このアプリには画像・動画を受け取るバックエンドはなく、通常はブラウザのIndexedDBに保存されます。端末ストレージ欄で使用量と永続保存状態を確認できます。画像一覧は保存済みサムネイルを使い、原画は詳細を開いた時だけ読みます。カメラはHTTPSまたはlocalhostが必要です。必要なプロジェクトはZIPでもバックアップしてください。ZIPには実行中・一時停止中ジョブの再開状態は含まれません。',
+                'This app has no backend for receiving images or videos; data is normally stored in browser IndexedDB. Device storage shows usage and persistence state. The gallery uses saved thumbnails and loads originals only for details. Camera access requires HTTPS or localhost. Also back up important projects as ZIP files; ZIP files do not include resume state for in-progress or paused jobs.',
               )}
             </p>
           </section>

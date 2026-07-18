@@ -6,9 +6,11 @@
  * 「未実装」を明示するスタブのみ提供する。
  *
  * 実装時の予定構成(作業計画 §2.2):
- * - SfM:  OpenMVG のWASM移植(代替: COLMAP WASM / OpenCV.jsベース自前実装)
- * - MVS:  OpenMVS のWASM移植(縮小画像運用)
- * - 表面: PoissonRecon のWASM移植
+ * - SfM:  OpenMVG (MPL-2.0)のWASM移植
+ * - MVS:  自前PatchMatch (JS/WASM、代替: 疎点群+深度補間)
+ * - 表面: PoissonRecon + Manifold + libiglコアのみ(copyleft配下は使用しない)
+ * - 四面体: fTetWild (MPL-2.0)のWASM移植
+ * 候補本体と推移依存は、実装前にCIのライセンス許可リストで検査する。
  */
 
 /** SfM入力: 採用画像のID列とカメラ内部パラメータ推定設定 */
@@ -55,5 +57,5 @@ export function runSurfaceReconstruction(): Promise<never> {
 }
 
 export function runTetMeshing(): Promise<never> {
-  return Promise.reject(new NotImplementedError('四面体メッシュ生成(TetGen WASM)'));
+  return Promise.reject(new NotImplementedError('四面体メッシュ生成(fTetWild WASM)'));
 }
