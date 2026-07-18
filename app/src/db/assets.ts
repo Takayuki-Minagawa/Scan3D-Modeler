@@ -1,5 +1,11 @@
 import { db, uid, now } from './db';
-import type { AssetKind, AssetMeta } from '../types';
+import type { AssetKind, AssetMeta, ImageAssetMetadata } from '../types';
+
+export interface NewAssetThumbnail {
+  blob: Blob;
+  width: number;
+  height: number;
+}
 
 export interface NewAsset {
   projectId: string;
@@ -9,11 +15,15 @@ export interface NewAsset {
   blob: Blob;
   excluded?: boolean;
   quality?: AssetMeta['quality'];
+  thumbnail?: NewAssetThumbnail;
+  image?: ImageAssetMetadata;
   meta?: Record<string, unknown>;
 }
 
 export async function addAsset(input: NewAsset): Promise<AssetMeta> {
   const d = await db();
+  const createdAt = now();
+  const thumbnailId = input.thumbnail ? uid() : undefined;
   const meta: AssetMeta = {
     id: uid(),
     projectId: input.projectId,
@@ -24,9 +34,29 @@ export async function addAsset(input: NewAsset): Promise<AssetMeta> {
     size: input.blob.size,
     excluded: input.excluded,
     quality: input.quality,
+    thumbnailAssetId: thumbnailId,
+    image: input.image,
     meta: input.meta,
-    createdAt: now(),
+    createdAt,
   };
+  const thumbnailMeta: AssetMeta | undefined = input.thumbnail
+    ? {
+        id: thumbnailId!,
+        projectId: input.projectId,
+        stageId: input.stageId ?? null,
+        kind: 'thumbnail',
+        name: `${input.name}.thumbnail.jpg`,
+        mime: input.thumbnail.blob.type || 'image/jpeg',
+        size: input.thumbnail.blob.size,
+        sourceAssetId: meta.id,
+        meta: {
+          role: 'galleryThumbnail',
+          width: input.thumbnail.width,
+          height: input.thumbnail.height,
+        },
+        createdAt,
+      }
+    : undefined;
   // project存在確認と書き込みを同一トランザクションで行い、
   // プロジェクト削除と競合しても孤児アセットを残さない
   const tx = d.transaction(['projects', 'assets', 'blobs'], 'readwrite');
@@ -36,12 +66,89 @@ export async function addAsset(input: NewAsset): Promise<AssetMeta> {
     await tx.done.catch(() => undefined);
     throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
   }
-  await Promise.all([
+  const writes: Promise<unknown>[] = [
     tx.objectStore('assets').put(meta),
     tx.objectStore('blobs').put({ assetId: meta.id, blob: input.blob }),
-  ]);
+  ];
+  if (thumbnailMeta && input.thumbnail) {
+    writes.push(tx.objectStore('assets').put(thumbnailMeta));
+    writes.push(
+      tx.objectStore('blobs').put({ assetId: thumbnailMeta.id, blob: input.thumbnail.blob }),
+    );
+  }
+  await Promise.all(writes);
   await tx.done;
   return meta;
+}
+
+/**
+ * 旧DB/旧ZIPの原画に後からサムネイルを関連付ける。
+ * 生成はtransaction外で行い、関連付けと2レコードの保存だけを原子的に行う。
+ * 別タブが先に補完済みなら既存関連を採用し、重複サムネイルを作らない。
+ */
+export async function attachAssetThumbnail(
+  sourceAssetId: string,
+  thumbnail: NewAssetThumbnail,
+): Promise<AssetMeta | undefined> {
+  const d = await db();
+  const tx = d.transaction(['projects', 'assets', 'blobs'], 'readwrite');
+  const assets = tx.objectStore('assets');
+  const blobs = tx.objectStore('blobs');
+  const source = await assets.get(sourceAssetId);
+  if (
+    !source ||
+    !['image', 'frame'].includes(source.kind) ||
+    !(await tx.objectStore('projects').get(source.projectId))
+  ) {
+    await tx.done;
+    return undefined;
+  }
+
+  if (source.thumbnailAssetId) {
+    const [existingMeta, existingBlob] = await Promise.all([
+      assets.get(source.thumbnailAssetId),
+      blobs.get(source.thumbnailAssetId),
+    ]);
+    if (
+      existingMeta?.kind === 'thumbnail' &&
+      existingMeta.sourceAssetId === source.id &&
+      existingBlob
+    ) {
+      await tx.done;
+      return source;
+    }
+    // 自分に属する壊れたサムネイルだけを掃除する。破損/細工された他asset参照を
+    // 追って削除しない（原画データの巻き込み防止）。
+    if (existingMeta?.kind === 'thumbnail' && existingMeta.sourceAssetId === source.id) {
+      await Promise.all([
+        assets.delete(source.thumbnailAssetId),
+        blobs.delete(source.thumbnailAssetId),
+      ]);
+    }
+  }
+
+  const id = uid();
+  const createdAt = now();
+  const thumbnailMeta: AssetMeta = {
+    id,
+    projectId: source.projectId,
+    stageId: source.stageId,
+    kind: 'thumbnail',
+    name: `${source.name}.thumbnail.jpg`,
+    mime: thumbnail.blob.type || 'image/jpeg',
+    size: thumbnail.blob.size,
+    sourceAssetId: source.id,
+    meta: { role: 'galleryThumbnail', width: thumbnail.width, height: thumbnail.height },
+    createdAt,
+  };
+  const updated = { ...source, thumbnailAssetId: id };
+  await Promise.all([
+    assets.put(updated),
+    assets.put(thumbnailMeta),
+    blobs.put({ assetId: id, blob: thumbnail.blob }),
+  ]);
+  await tx.done;
+  return updated;
 }
 
 export async function listAssets(projectId: string, kinds?: AssetKind[]): Promise<AssetMeta[]> {
@@ -77,6 +184,28 @@ export async function updateAsset(id: string, patch: Partial<AssetMeta>): Promis
 export async function deleteAsset(id: string): Promise<void> {
   const d = await db();
   const tx = d.transaction(['assets', 'blobs'], 'readwrite');
-  await Promise.all([tx.objectStore('assets').delete(id), tx.objectStore('blobs').delete(id)]);
+  const assets = tx.objectStore('assets');
+  const blobs = tx.objectStore('blobs');
+  const asset = await assets.get(id);
+  const deletes: Promise<unknown>[] = [assets.delete(id), blobs.delete(id)];
+  if (asset?.thumbnailAssetId) {
+    const thumbnail = await assets.get(asset.thumbnailAssetId);
+    if (thumbnail?.kind === 'thumbnail' && thumbnail.sourceAssetId === asset.id) {
+      deletes.push(assets.delete(asset.thumbnailAssetId), blobs.delete(asset.thumbnailAssetId));
+    }
+  }
+  // 通常は原画側から削除するが、サムネイル単体削除にも参照整合性を持たせる。
+  if (asset?.sourceAssetId) {
+    const source = await assets.get(asset.sourceAssetId);
+    if (
+      source &&
+      ['image', 'frame'].includes(source.kind) &&
+      source.thumbnailAssetId === id &&
+      asset.kind === 'thumbnail'
+    ) {
+      deletes.push(assets.put({ ...source, thumbnailAssetId: undefined }));
+    }
+  }
+  await Promise.all(deletes);
   await tx.done;
 }

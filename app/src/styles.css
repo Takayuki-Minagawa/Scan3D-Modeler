@@ -303,6 +303,78 @@ label.check {
 }
 
 /* プロジェクト一覧 */
+.storage-card {
+  --storage-meter-color: var(--accent);
+}
+.storage-card-warning {
+  --storage-meter-color: var(--warn);
+  border-color: var(--warn);
+}
+.storage-card-head {
+  align-items: flex-start;
+}
+.storage-card-head .hint {
+  margin-bottom: 0;
+}
+.storage-usage-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+.storage-meter {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+.storage-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--storage-meter-color);
+}
+.storage-warning,
+.storage-persistence-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.storage-warning {
+  padding: 9px 11px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: var(--panel2);
+  font-size: 0.83rem;
+}
+.storage-warning button,
+.storage-persistence-row button {
+  flex: 0 0 auto;
+}
+.storage-persistence-row .hint {
+  margin: 0;
+}
+.storage-breakdown-target {
+  scroll-margin-top: 12px;
+  border-radius: 12px;
+}
+.storage-breakdown-target:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+.project-storage-note {
+  margin-bottom: 10px;
+}
+.project-storage-size {
+  display: block;
+  color: var(--badge-info-text);
+  font-weight: 650;
+}
 .project-list {
   list-style: none;
   padding: 0;
@@ -379,7 +451,7 @@ label.check {
 /* ギャラリー */
 .gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px;
 }
 .shot {
@@ -415,21 +487,65 @@ label.check {
   opacity: 0.55;
 }
 .shot figcaption {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   padding: 3px 6px;
   font-size: 0.72rem;
   color: var(--muted);
 }
-.shot figcaption .mini {
+.shot-caption-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.shot-caption-row .mini:first-of-type {
   margin-left: auto;
+}
+.shot-meta {
+  display: grid;
+  gap: 1px;
+  padding: 4px 0 2px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .shot-loading {
   aspect-ratio: 4/3;
   display: grid;
   place-items: center;
   color: var(--muted);
+}
+.image-detail-dialog {
+  width: min(960px, 100%);
+}
+.image-detail-content {
+  overflow-y: auto;
+  padding: 16px 18px 20px;
+}
+.image-detail-preview {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  border-radius: 8px;
+  background: #080b0e;
+  overflow: hidden;
+}
+.image-detail-preview img {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+}
+.image-metadata {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 16px;
+  margin: 14px 0 0;
+  font-size: 0.86rem;
+}
+.image-metadata dt {
+  color: var(--muted);
+}
+.image-metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* パイプライン */
@@ -542,6 +658,64 @@ label.check {
   font-size: 0.9rem;
   pointer-events: none;
 }
+.measurement-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+.measurement-panel p {
+  margin: 0;
+}
+.measurement-form {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.measurement-form > .hint {
+  flex: 1 1 100%;
+}
+.measurement-form label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.coordinate-entry {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.coordinate-entry legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.coordinate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(86px, 1fr));
+  gap: 7px;
+}
+.coordinate-grid label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.coordinate-grid input {
+  width: 100%;
+  min-width: 0;
+}
+.coordinate-entry button {
+  justify-self: start;
+}
 
 /* 出力 */
 .export-grid {
@@ -602,6 +776,37 @@ label.check {
 }
 .language-toggle {
   font-weight: 650;
+}
+.runtime-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.runtime-status-active {
+  color: var(--badge-ok-text);
+  border-color: var(--ok);
+}
+.runtime-status-installing {
+  color: var(--badge-warn-text);
+  border-color: var(--warn);
+}
+.runtime-status-failed {
+  color: var(--badge-err-text);
+  border-color: var(--err);
+}
+.runtime-status-update {
+  color: var(--badge-warn-text);
+  border-color: var(--warn);
+}
+.runtime-status-reload {
+  color: var(--badge-warn-text);
+  border-color: var(--warn);
 }
 
 /* In-app quick guide. */
@@ -702,6 +907,15 @@ label.check {
   .theme-toggle-option {
     flex: 1;
   }
+  .storage-warning,
+  .storage-persistence-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .storage-warning button,
+  .storage-persistence-row button {
+    align-self: flex-start;
+  }
   .manual-backdrop {
     padding: 8px;
   }
@@ -716,5 +930,8 @@ label.check {
   }
   .manual-content {
     padding: 2px 14px 12px;
+  }
+  .coordinate-grid {
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
   }
 }

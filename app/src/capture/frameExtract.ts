@@ -3,7 +3,12 @@ import { createStage, setStageStatus } from '../db/stages';
 import { scoreImageData, thumbDiff, DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
 import { throwIfStopped, type JobContext } from '../jobs/runner';
 import { JobTextError, jobText } from '../jobs/text';
-import { blobToImageData, bitmapToImageData, canvasToBlob } from './imageUtil';
+import {
+  blobToImageData,
+  bitmapToImageData,
+  canvasToBlob,
+  createThumbnailFromSource,
+} from './imageUtil';
 
 /**
  * 動画からのキーフレーム抽出エンジン(作業計画 1B-3)。
@@ -102,7 +107,10 @@ export async function extractFramesEngine(
         cp.lastBlurThumb != null &&
         thumbDiff(cp.lastBlurThumb, thumb) < DEDUP_DIFF_THRESHOLD;
       if (!dupOfSharp && !dupOfBlur) {
-        const frameBlob = await canvasToBlob(canvas, 'image/jpeg', 0.85);
+        const [frameBlob, thumbnail] = await Promise.all([
+          canvasToBlob(canvas, 'image/jpeg', 0.85),
+          createThumbnailFromSource(canvas),
+        ]);
         await addAsset({
           projectId: ctx.job.projectId,
           stageId: cp.stageId,
@@ -111,7 +119,14 @@ export async function extractFramesEngine(
           blob: frameBlob,
           excluded: !sharp,
           quality: { blur: Math.round(score), sharp },
-          meta: { timeMs: Math.round(t), video: videoAsset.name },
+          thumbnail,
+          image: { widthPx: canvas.width, heightPx: canvas.height },
+          meta: {
+            timeMs: Math.round(t),
+            video: videoAsset.name,
+            width: canvas.width,
+            height: canvas.height,
+          },
         });
         if (sharp) {
           cp.kept++;
@@ -149,17 +164,29 @@ export async function extractFramesEngine(
  */
 export async function scoreImagesEngine(ctx: JobContext): Promise<void> {
   const images = (await listAssets(ctx.job.projectId, ['image', 'frame'])).filter(
-    (a) => a.quality?.blur === undefined,
+    (a) => a.quality?.blur === undefined && a.meta?.scoreSkipped === undefined,
   );
   let done = 0;
   for (const asset of images) {
     throwIfStopped(ctx.signal);
     const blob = await getAssetBlob(asset.id);
+    let img: ImageData | null = null;
     if (blob) {
-      const img = await blobToImageData(blob);
+      try {
+        img = await blobToImageData(blob);
+      } catch {
+        // HEIC等、ブラウザがデコードできない原画は保持したまま採点だけをスキップする。
+      }
+    }
+    if (img) {
       const { score } = await scoreImageData(img);
       await updateAsset(asset.id, {
         quality: { blur: Math.round(score), sharp: score >= DEFAULT_BLUR_THRESHOLD },
+      });
+    } else {
+      // 1件の未知形式/欠損で後続JPEGまでfailedにしない。理由は言語非依存で永続化する。
+      await updateAsset(asset.id, {
+        meta: { ...asset.meta, scoreSkipped: blob ? 'decode-failed' : 'missing-blob' },
       });
     }
     done++;
