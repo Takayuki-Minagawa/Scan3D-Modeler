@@ -66,7 +66,7 @@ npm run typecheck
 
 - アプリはサーバを必要としない静的構成です。長時間ジョブはブラウザ内のWeb WorkerとIndexedDBを利用します。
 - 実再構成用のWASMコンポーネントはまだ同梱していません。配布版はCOOP/COEP相当の応答を行うService Workerを備え、`crossOriginIsolated` の状態を画面に表示します。
-- PWAはビルド時に生成した全アセット一覧を原子的にキャッシュします。更新版は作業中に強制再読込せず、画面の更新操作を選んだ時に切り替えます。オフライン利用は最初のオンライン読込と準備完了後に有効です。
+- PWAは起動に必須のHTML/JavaScript/CSSだけを原子的にキャッシュし、遅延読込chunk・アイコン・ライセンス文書はアプリ起動後のアイドル時に個別失敗を許容して追加保存します。データ節約設定または低速回線では追加保存を行わず、利用時に保存します。更新版は作業中に強制再読込せず、画面の更新操作を選んだ時に切り替えます。オフライン利用は最初のオンライン読込と準備完了後に有効です。
 - 3Dビューアは遅延読込され、初期画面のJavaScriptからThree.jsを分離しています（現ビルドの初期chunk約283KB、viewer chunk約524KB）。
 - ブラウザのストレージ削除、シークレットモードの終了、容量制限などにより、ローカルデータが失われる場合があります。
 - 既知の制約や開発中の項目は、公開利用の前にコードとリリースノートで確認してください。
@@ -76,6 +76,8 @@ npm run typecheck
 本リポジトリの独自コードは [MIT License](LICENSE) で提供します。Copyright (c) 2026 Takayuki Minagawa.
 
 ブラウザ向け配布物には、それぞれのライセンスに従う第三者ソフトウェアが含まれます。著作権表示とライセンス本文は [第三者ソフトウェアライセンス一覧](app/public/third-party-licenses.txt) を参照してください。
+
+本番依存を追加した場合は `npm run licenses:generate` でnoticeを再生成してください。依存パッケージにライセンス本文ファイルが同梱されていない場合、またはnoticeが依存関係と一致しない場合は、配布条件を確認できるまで `npm run build` が意図的に失敗します。
 
 ---
 
@@ -145,7 +147,7 @@ The in-app quick guide presents the same workflow and limitations in Japanese an
 
 - This is a serverless static application. Long-running jobs use browser Web Workers and IndexedDB.
 - No WASM reconstruction component is bundled yet. The production app includes a Service Worker that supplies COOP/COEP-equivalent responses and reports `crossOriginIsolated` status in the UI.
-- The PWA atomically precaches the build-generated asset list. An update does not force-reload active work; it switches only after the on-screen update action is selected. Offline use becomes available after the first online load and preparation.
+- The PWA atomically precaches only the HTML/JavaScript/CSS required to boot. Lazy chunks, icons, and license documents are cached independently while the app is idle, so an optional download failure does not block installation. That warmup is skipped on data-saving or slow connections and those resources are cached when used instead. An update does not force-reload active work; it switches only after the on-screen update action is selected. Offline use becomes available after the first online load and preparation.
 - The 3D viewer is loaded on demand, keeping Three.js out of the initial project-list JavaScript (about 283 KB for the current initial chunk and 524 KB for the viewer chunk).
 - Browser storage can be lost through data clearing, private-browsing expiration, or storage limits.
 - Review the source code and release notes before relying on an unfinished feature in a public deployment.
@@ -155,3 +157,5 @@ The in-app quick guide presents the same workflow and limitations in Japanese an
 Original code in this repository is available under the [MIT License](LICENSE). Copyright (c) 2026 Takayuki Minagawa.
 
 The browser distribution includes third-party software under its respective licenses. See the [third-party software notices](app/public/third-party-licenses.txt) for copyright notices and license texts.
+
+After adding a production dependency, regenerate the notices with `npm run licenses:generate`. `npm run build` intentionally fails until distribution terms can be verified when a package does not include its license text or when the generated notices no longer match the dependency tree.

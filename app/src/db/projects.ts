@@ -1,7 +1,11 @@
 import { db, uid, now } from './db';
 import type { Project, ScaleCalibration } from '../types';
 
-export type ProjectInput = Omit<Project, 'id' | 'createdAt' | 'updatedAt'>;
+/** Project unit is selected at creation and immutable afterwards. */
+export type ProjectInput = Omit<
+  Project,
+  'id' | 'createdAt' | 'updatedAt' | 'scaleCalibration'
+>;
 
 export async function listProjects(): Promise<Project[]> {
   const all = await (await db()).getAll('projects');
@@ -43,6 +47,11 @@ export async function updateProjectScaleCalibration(
   const updatedAt = now();
   let updated: Project;
   if (calibration) {
+    if (calibration.unit !== project.unit) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error('スケール校正の単位がプロジェクトの単位と一致しません');
+    }
     updated = {
       ...project,
       scaleMethod: 'twoPoint',

@@ -14,6 +14,11 @@ let reloadRequired = false;
 let setupState: 'idle' | 'installing' | 'failed' = 'idle';
 let registrationStarted = false;
 
+type NetworkInformationHint = {
+  saveData?: boolean;
+  effectiveType?: string;
+};
+
 function emitStatus(): void {
   window.dispatchEvent(new Event(STATUS_EVENT));
 }
@@ -51,6 +56,29 @@ function requestOldCacheCleanup(): Promise<void> {
     };
     controller.postMessage({ type: 'cleanupOldCaches' }, [channel.port2]);
   });
+}
+
+function requestOptionalCacheWarmup(registration: ServiceWorkerRegistration): void {
+  const connection = (navigator as Navigator & { connection?: NetworkInformationHint }).connection;
+  if (
+    connection?.saveData ||
+    connection?.effectiveType === 'slow-2g' ||
+    connection?.effectiveType === '2g'
+  ) {
+    return;
+  }
+
+  const postWarmupRequest = () => {
+    registration.active?.postMessage({ type: 'warmOptionalResources' });
+  };
+  const requestIdleCallback = (
+    window as unknown as { requestIdleCallback?: Window['requestIdleCallback'] }
+  ).requestIdleCallback;
+  if (requestIdleCallback) {
+    requestIdleCallback.call(window, postWarmupRequest, { timeout: 5_000 });
+  } else {
+    window.setTimeout(postWarmupRequest, 1_000);
+  }
 }
 
 /**
@@ -126,9 +154,10 @@ export async function registerPwa(): Promise<void> {
     observeWaitingWorker(registration.installing);
     registration.addEventListener('updatefound', () => observeWaitingWorker(registration.installing));
 
-    await waitForServiceWorkerReady(READY_TIMEOUT_MS);
+    const readyRegistration = await waitForServiceWorkerReady(READY_TIMEOUT_MS);
     setupState = 'idle';
     emitStatus();
+    requestOptionalCacheWarmup(readyRegistration);
     await requestOldCacheCleanup();
     registration.update().catch(() => undefined);
   } catch (error) {

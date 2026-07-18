@@ -30,6 +30,7 @@ export interface Project {
   id: string;
   name: string;
   objectName: string;
+  /** 作成後は変更しない。校正値とZIPの単位整合性を保つ基準単位。 */
   unit: Unit;
   approxSize: ApproxSize;
   captureMethod: CaptureMethod;

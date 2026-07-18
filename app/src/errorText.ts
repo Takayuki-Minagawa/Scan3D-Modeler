@@ -58,6 +58,8 @@ export function formatAppError(error: unknown, language: Language): string {
       'Enter a measured distance greater than zero.',
     'スケール校正の元データを特定できません':
       'The source data for the scale calibration could not be identified.',
+    'スケール校正の単位がプロジェクトの単位と一致しません':
+      'The scale calibration unit does not match the project unit.',
     'スケール倍率が有効範囲を超えています。入力した距離を確認してください':
       'The scale factor is outside the supported range. Check the measured distance.',
     '保存済みのスケール倍率が不正です。校正をやり直してください':

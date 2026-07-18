@@ -10,9 +10,14 @@ const SCOPE_KEY = encodeURIComponent(new URL(self.registration.scope).pathname);
 const CACHE_PREFIX = `scan2fem-shell-${SCOPE_KEY}-`;
 const BUILD_ID = /*__SCAN2FEM_BUILD_ID__*/ 'source';
 const CACHE_NAME = `${CACHE_PREFIX}${BUILD_ID}`;
-const PRECACHE_PATHS = /*__SCAN2FEM_PRECACHE_PATHS__*/ [
+// The generated production worker replaces these two lists. Only resources required to boot the
+// app belong in the atomic shell list. Lazy chunks, icons, and notices are warmed independently so
+// one optional download cannot prevent COOP/COEP control or installation of the offline shell.
+const SHELL_PRECACHE_PATHS = /*__SCAN2FEM_SHELL_PRECACHE_PATHS__*/ [
   './',
   './index.html',
+];
+const OPTIONAL_PRECACHE_PATHS = /*__SCAN2FEM_OPTIONAL_PRECACHE_PATHS__*/ [
   './manifest.webmanifest',
   './favicon.svg',
 ];
@@ -33,16 +38,37 @@ function withIsolationHeaders(response) {
   });
 }
 
-self.addEventListener('install', (event) => {
+async function warmOptionalResources() {
   const scope = self.registration.scope;
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_PATHS.map((path) => new URL(path, scope).href)))
-      // 初回導入だけは現在のdocumentを分離実行にするため即時有効化する。
-      // 更新時は録画・編集中のタブを強制reloadせず、UIからの明示操作を待つ。
-      .then(() => (self.registration.active ? undefined : self.skipWaiting())),
+  const cache = await caches.open(CACHE_NAME);
+  const optionalResults = await Promise.allSettled(
+    OPTIONAL_PRECACHE_PATHS.map(async (path) => {
+      const resourceUrl = new URL(path, scope).href;
+      if (await cache.match(resourceUrl)) return;
+      await cache.add(resourceUrl);
+    }),
   );
+  const failedOptionalPaths = OPTIONAL_PRECACHE_PATHS.filter(
+    (_path, index) => optionalResults[index].status === 'rejected',
+  );
+  if (failedOptionalPaths.length > 0) {
+    console.warn('Scan2FEM optional offline resources were not cached', failedOptionalPaths);
+  }
+}
+
+async function installOfflineShell() {
+  const scope = self.registration.scope;
+  const cache = await caches.open(CACHE_NAME);
+
+  await cache.addAll(SHELL_PRECACHE_PATHS.map((path) => new URL(path, scope).href));
+
+  // 初回導入だけは現在のdocumentを分離実行にするため即時有効化する。
+  // 更新時は録画・編集中のタブを強制reloadせず、UIからの明示操作を待つ。
+  if (!self.registration.active) await self.skipWaiting();
+}
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(installOfflineShell());
 });
 
 async function cleanupOldCachesIfSafe(requestingClientId) {
@@ -69,6 +95,8 @@ async function cleanupOldCachesIfSafe(requestingClientId) {
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'activateUpdate') {
     event.waitUntil(self.skipWaiting());
+  } else if (event.data?.type === 'warmOptionalResources') {
+    event.waitUntil(warmOptionalResources());
   } else if (event.data?.type === 'cleanupOldCaches') {
     event.waitUntil(
       cleanupOldCachesIfSafe(event.source?.id).finally(() => {
