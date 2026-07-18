@@ -19,4 +19,6 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - run: npm ci
+      - run: npm run licenses:check
+      - run: npm run licenses:verify
       - run: npm run build

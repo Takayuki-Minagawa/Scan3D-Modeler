@@ -2,6 +2,7 @@
   "name": "scan2fem",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "小型対象物3Dスキャン・FEMモデル作成Webアプリ(静的アプリ版)",
   "type": "module",
   "engines": {
@@ -9,7 +10,11 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run licenses:check && npm run licenses:verify && tsc --noEmit && vite build && npm run pwa:inject",
+    "licenses:check": "license-checker --excludePrivatePackages --summary --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;MPL-2.0;CC-BY-3.0;CC0-1.0;0BSD;Unlicense\"",
+    "licenses:generate": "node scripts/generate-third-party-licenses.mjs",
+    "licenses:verify": "node scripts/generate-third-party-licenses.mjs --check",
+    "pwa:inject": "node scripts/inject-precache.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -25,6 +30,7 @@
     "@types/react-dom": "^18.3.0",
     "@types/three": "^0.169.0",
     "@vitejs/plugin-react": "^6.0.3",
+    "license-checker": "^25.0.1",
     "typescript": "^5.5.4",
     "vite": "^8.1.4"
   }
