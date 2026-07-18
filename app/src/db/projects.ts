@@ -1,5 +1,5 @@
 import { db, uid, now } from './db';
-import type { Project } from '../types';
+import type { Project, ScaleCalibration } from '../types';
 
 export type ProjectInput = Omit<Project, 'id' | 'createdAt' | 'updatedAt'>;
 
@@ -23,6 +23,39 @@ export async function touchProject(id: string): Promise<void> {
   const d = await db();
   const p = await d.get('projects', id);
   if (p) await d.put('projects', { ...p, updatedAt: now() });
+}
+
+/** 生の段階データを変更せず、プロジェクト設定として表示・出力倍率を保存する。 */
+export async function updateProjectScaleCalibration(
+  id: string,
+  calibration: ScaleCalibration | null,
+): Promise<Project> {
+  const d = await db();
+  const tx = d.transaction('projects', 'readwrite');
+  const store = tx.objectStore('projects');
+  const project = await store.get(id);
+  if (!project) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
+  }
+
+  const updatedAt = now();
+  let updated: Project;
+  if (calibration) {
+    updated = {
+      ...project,
+      scaleMethod: 'twoPoint',
+      scaleCalibration: calibration,
+      updatedAt,
+    };
+  } else {
+    const { scaleCalibration: _removed, ...withoutCalibration } = project;
+    updated = { ...withoutCalibration, scaleMethod: 'later', updatedAt };
+  }
+  await store.put(updated);
+  await tx.done;
+  return updated;
 }
 
 /**

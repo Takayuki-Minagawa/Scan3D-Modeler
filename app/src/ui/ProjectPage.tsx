@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { CapturePanel } from '../capture/CapturePanel';
 import { Gallery } from '../capture/Gallery';
 import { ImportPanel } from '../capture/ImportPanel';
@@ -6,10 +6,41 @@ import { getProject } from '../db/projects';
 import { useI18n } from '../i18n';
 import { onJobsChanged } from '../jobs/runner';
 import { PipelinePanel } from '../pipeline/PipelinePanel';
+import { StoragePanel } from '../storage/StoragePanel';
 import type { Project } from '../types';
-import { ViewerPanel } from '../viewer/ViewerPanel';
 import { ExportPanel } from './ExportPanel';
 import { AppControls } from './AppControls';
+
+const ViewerPanel = lazy(() =>
+  import('../viewer/ViewerPanel').then((module) => ({ default: module.ViewerPanel })),
+);
+
+class ViewerLoadBoundary extends Component<
+  { children: ReactNode; message: string; reloadLabel: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown): void {
+    console.error('3D viewer chunk failed to load', error);
+  }
+
+  render(): ReactNode {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="warn-box">
+        <p>{this.props.message}</p>
+        <button type="button" onClick={() => window.location.reload()}>
+          {this.props.reloadLabel}
+        </button>
+      </div>
+    );
+  }
+}
 
 type Tab = 'capture' | 'images' | 'pipeline' | 'viewer' | 'export';
 
@@ -79,6 +110,8 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
         <AppControls />
       </header>
 
+      <StoragePanel refreshKey={refreshKey} onManageStorage={props.onBack} />
+
       <nav className="tabs">
         {tabs.map((t) => (
           <button
@@ -101,7 +134,23 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
         <Gallery projectId={project.id} refreshKey={refreshKey} onChanged={bump} />
       )}
       {tab === 'pipeline' && <PipelinePanel projectId={project.id} />}
-      {tab === 'viewer' && <ViewerPanel projectId={project.id} refreshKey={refreshKey} />}
+      {tab === 'viewer' && (
+        <ViewerLoadBoundary
+          message={tr(
+            '3Dビューアを読み込めませんでした。アプリ更新後の古いキャッシュが残っている可能性があります。',
+            'The 3D viewer could not be loaded. An older cached app version may still be active.',
+          )}
+          reloadLabel={tr('再読み込み', 'Reload')}
+        >
+          <Suspense fallback={<p className="hint">{tr('3Dビューアを読み込み中…', 'Loading 3D viewer…')}</p>}>
+            <ViewerPanel
+              project={project}
+              refreshKey={refreshKey}
+              onProjectChange={setProject}
+            />
+          </Suspense>
+        </ViewerLoadBoundary>
+      )}
       {tab === 'export' && <ExportPanel project={project} refreshKey={refreshKey} />}
     </main>
   );
