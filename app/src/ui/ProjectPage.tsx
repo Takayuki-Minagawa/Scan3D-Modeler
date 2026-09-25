@@ -6,6 +6,7 @@ import { getProject } from '../db/projects';
 import { useI18n } from '../i18n';
 import { onJobsChanged } from '../jobs/runner';
 import { PipelinePanel } from '../pipeline/PipelinePanel';
+import { ExternalGeometryPanel } from '../import/ExternalGeometryPanel';
 import { StoragePanel } from '../storage/StoragePanel';
 import type { Project } from '../types';
 import { ExportPanel } from './ExportPanel';
@@ -128,6 +129,7 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
         <>
           <CapturePanel projectId={project.id} onCaptured={bump} />
           <ImportPanel projectId={project.id} refreshKey={refreshKey} onImported={bump} />
+          <ExternalGeometryPanel project={project} onChanged={bump} />
         </>
       )}
       {tab === 'images' && (

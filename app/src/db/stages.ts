@@ -14,6 +14,9 @@ export async function createStage(
     params?: Record<string, unknown>;
     sourceStageId?: string | null;
     demo?: boolean;
+    origin?: Stage['origin'];
+    inputUnit?: Stage['inputUnit'];
+    sourceFileName?: string;
     note?: string;
   } = {},
 ): Promise<Stage> {
@@ -42,6 +45,9 @@ export async function createStage(
     seq: (last?.value.seq ?? 0) + 1,
     status: 'running',
     demo: opts.demo,
+    origin: opts.origin ?? (opts.demo ? 'demo' : undefined),
+    inputUnit: opts.inputUnit,
+    sourceFileName: opts.sourceFileName,
     params: opts.params,
     sourceStageId: opts.sourceStageId ?? null,
     note: opts.note,

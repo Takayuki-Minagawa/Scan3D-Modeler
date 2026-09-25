@@ -341,6 +341,9 @@ export function ViewerPanel(props: {
       aside={
         <div className="row wrap viewer-controls">
           {isDemo && <Badge tone="demo">{tr('デモデータ(合成)', 'Demo data (synthetic)')}</Badge>}
+          {(cloud?.stage?.origin === 'external' || mesh?.stage?.origin === 'external') && (
+            <Badge tone="info">{tr('外部取込形状', 'External geometry')}</Badge>
+          )}
           <label className="check">
             <input
               type="checkbox"
@@ -380,8 +383,8 @@ export function ViewerPanel(props: {
             {tr('表示できる3Dデータがまだありません。', 'No 3D data is available to display yet.')}
             <br />
             {tr(
-              '「パイプライン」タブでデモ生成を実行するか、再構成(実装予定)を行ってください。',
-              'Run Generate demo in Pipeline, or use reconstruction when it becomes available.',
+              '「パイプライン」タブでデモ生成するか、「取込」タブからPLY/STL形状を追加してください。',
+              'Generate demo data in Pipeline, or add PLY/STL geometry from Import.',
             )}
           </div>
         )}
@@ -504,8 +507,8 @@ export function ViewerPanel(props: {
           'ドラッグ/1本指: 回転 ・ ホイール/2本指ピンチ: ズーム ・ 右ドラッグ/2本指ドラッグ: 移動',
           'Drag / one finger: rotate · wheel / two-finger pinch: zoom · right drag / two-finger drag: pan',
         )}
-        {cloud && tr(` | 点群: ${String(cloud.asset.meta?.count ?? '-')}点`, ` | Point cloud: ${String(cloud.asset.meta?.count ?? '-')} points`)}
-        {mesh && tr(` | サーフェス: ${String(mesh.asset.meta?.triangles ?? '-')}三角形`, ` | Surface: ${String(mesh.asset.meta?.triangles ?? '-')} triangles`)}
+        {cloud && tr(` | 点群: ${String(cloud.asset.meta?.count ?? cloud.stage?.stats?.vertices ?? '-')}点`, ` | Point cloud: ${String(cloud.asset.meta?.count ?? cloud.stage?.stats?.vertices ?? '-')} points`)}
+        {mesh && tr(` | サーフェス: ${String(mesh.asset.meta?.triangles ?? mesh.stage?.stats?.triangles ?? '-')}三角形`, ` | Surface: ${String(mesh.asset.meta?.triangles ?? mesh.stage?.stats?.triangles ?? '-')} triangles`)}
       </div>
     </Section>
   );
