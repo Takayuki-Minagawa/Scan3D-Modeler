@@ -1,0 +1,25 @@
+{
+  "name": "Scan2FEM — 3D Scan to FEM Mesh",
+  "short_name": "Scan2FEM",
+  "description": "撮影画像を端末内で整理し、FEM用メッシュ作成ワークフローを支援する静的Webアプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10151c",
+  "theme_color": "#1769d7",
+  "icons": [
+    {
+      "src": "./pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
