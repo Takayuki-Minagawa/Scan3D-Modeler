@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { diagnoseImageSet } from '../capture/diagnosis';
 import { listAssets } from '../db/assets';
 import { listJobs } from '../db/jobs';
 import { listStages } from '../db/stages';
@@ -12,7 +13,7 @@ import {
   stopJob,
 } from '../jobs/runner';
 import { formatJobError, formatJobMessage, formatJobTitle, formatStageStats, jobText } from '../jobs/text';
-import type { JobRecord, Stage, StageKind } from '../types';
+import type { AssetMeta, JobRecord, Stage, StageKind } from '../types';
 import { STAGE_ORDER } from '../types';
 import { Badge, ProgressBar, Section } from '../ui/common';
 import { fmtDateTime } from '../ui/misc';
@@ -28,7 +29,7 @@ export function PipelinePanel(props: { projectId: string }) {
   const { language, tr } = useI18n();
   const [stages, setStages] = useState<Stage[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
-  const [imageCount, setImageCount] = useState({ kept: 0, total: 0 });
+  const [images, setImages] = useState<AssetMeta[]>([]);
   const [error, setError] = useState<{ ja: string; en: string } | null>(null);
   const stageLabels: Record<StageKind, string> = {
     frames: tr('キーフレーム', 'Key frames'),
@@ -55,7 +56,7 @@ export function PipelinePanel(props: { projectId: string }) {
     ]);
     setStages(st);
     setJobs(jb);
-    setImageCount({ kept: imgs.filter((a) => !a.excluded).length, total: imgs.length });
+    setImages(imgs);
   }, [props.projectId]);
 
   useEffect(() => {
@@ -70,6 +71,7 @@ export function PipelinePanel(props: { projectId: string }) {
   for (const s of stages) latestByKind.set(s.kind, s);
 
   const hasActiveJob = jobs.some((j) => j.status === 'running' || j.status === 'paused');
+  const diagnosis = diagnoseImageSet(images);
 
   async function runDemo() {
     setError(null);
@@ -105,8 +107,8 @@ export function PipelinePanel(props: { projectId: string }) {
           <div className="stage-card">
             <div className="stage-name">{tr('画像セット', 'Image set')}</div>
             <div className="stage-status">
-              {imageCount.total > 0 ? (
-                <Badge tone="ok">{tr(`採用 ${imageCount.kept}枚`, `${imageCount.kept} kept`)}</Badge>
+              {images.length > 0 ? (
+                <Badge tone="ok">{tr(`採用 ${diagnosis.kept} / 除外 ${diagnosis.excluded}枚`, `${diagnosis.kept} kept / ${diagnosis.excluded} excluded`)}</Badge>
               ) : (
                 <Badge>{tr('未取込', 'Not imported')}</Badge>
               )}
@@ -125,6 +127,7 @@ export function PipelinePanel(props: { projectId: string }) {
                       {s.status === 'running' && <Badge tone="info">{tr('実行中', 'Running')}</Badge>}
                       {s.status === 'failed' && <Badge tone="err">{tr('失敗', 'Failed')}</Badge>}
                       {s.demo && <Badge tone="demo">{tr('デモ', 'Demo')}</Badge>}
+                      {s.origin === 'external' && <Badge tone="info">{tr('外部取込', 'External import')}</Badge>}
                     </>
                   ) : notImplemented ? (
                     <Badge tone="warn">{tr('未実装*', 'Not implemented*')}</Badge>
@@ -137,10 +140,26 @@ export function PipelinePanel(props: { projectId: string }) {
                     {formatStageStats(s.stats, language)}
                   </div>
                 )}
+                {s?.origin === 'external' && (
+                  <div className="stage-stats">
+                    {s.sourceFileName} · {tr('入力単位', 'Input unit')} {s.inputUnit}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
+        {images.length > 0 && (
+          <div className="diagnosis-summary">
+            <h3>{tr('再構成前の画像セット診断', 'Image-set checks before reconstruction')}</h3>
+            <p>{tr('解像度', 'Resolutions')}: {[...diagnosis.resolutionCounts].map(([size, count]) => `${size} (${count})`).join(', ') || tr('不明', 'Unknown')}
+              {diagnosis.missingDimensionsIds.length > 0 && ` · ${tr('寸法不明', 'Unknown dimensions')} ${diagnosis.missingDimensionsIds.length}`}</p>
+            <p>{tr('ブレ候補', 'Possible blur')}: {diagnosis.blurryIds.length} · {tr('焦点距離候補なし', 'Missing focal hint')}: {diagnosis.missingFocalIds.length}</p>
+            <p>{tr('カメラ', 'Cameras')}: {[...diagnosis.cameraCounts].map(([name, count]) => `${name} (${count})`).join(', ') || tr('情報なし', 'No metadata')}</p>
+            {diagnosis.cameraCounts.size > 1 && <p className="warn-box">{tr('複数のカメラ機種が混在しています。', 'Multiple camera models are present.')}</p>}
+            <p className="hint">{tr('画像タブで該当画像と露出・類似画像の候補を確認できます。重なりや3D復元の可否はここでは判定しません。', 'See the Images tab for affected images and possible exposure/similarity issues. This does not determine image overlap or reconstructability.')}</p>
+          </div>
+        )}
         <p className="hint">
           {tr(
             '* カメラ位置推定(SfM)以降の実再構成と四面体メッシュ生成は、フェーズ0のWASM実現性検証の完了後に実装します。それまでは「デモ生成」で後段のビューア・出力の流れを確認できます。段階データは上書きせず履歴として保持されます。',

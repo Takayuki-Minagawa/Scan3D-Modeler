@@ -88,14 +88,14 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
               <li>{tr('「取込」から静止画・動画を追加するか、カメラ撮影を使います。', 'Add images or videos from Import, or use camera capture.')}</li>
               <li>
                 {tr(
-                  '動画はキーフレーム抽出、静止画はブレ判定を行えます。不要な画像は「画像」タブで除外できます。',
-                  'Videos can be processed into key frames and still images can be blur-scored. Exclude unwanted images in Images.',
+                  '動画はキーフレーム抽出、静止画はブレ判定を行えます。「パイプライン」で画像診断、「画像」で候補の確認と焦点距離候補の記録ができます。',
+                  'Videos can be processed into key frames and still images can be blur-scored. Review image checks in Pipeline and record focal hints in Images.',
                 )}
               </li>
               <li>
                 {tr(
-                  '「パイプライン」の「デモ生成」で、ビューアと出力の操作を確認します。',
-                  'Use Generate demo in Pipeline to try the viewer and export flow.',
+                  '「パイプライン」の「デモ生成」で操作を試すか、「取込」でPLY/STL形状とその入力単位を指定して追加します。',
+                  'Try Generate demo in Pipeline, or import PLY/STL geometry and select its input unit in Import.',
                 )}
               </li>
               <li>
@@ -113,8 +113,8 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
             <ul>
               <li>
                 {tr(
-                  '現在の3D結果は合成データのデモです。実撮影画像からのSfM/MVS/サーフェス再構成は未実装です。',
-                  'Current 3D results are synthetic demos. SfM/MVS/surface reconstruction from real captures is not implemented.',
+                  '「デモ」は合成データ、「外部取込」はファイル由来です。実撮影画像からのSfM/MVS/サーフェス再構成は未実装です。',
+                  '“Demo” is synthetic and “External import” comes from a file. SfM/MVS/surface reconstruction from captured images is not implemented.',
                 )}
               </li>
               <li>

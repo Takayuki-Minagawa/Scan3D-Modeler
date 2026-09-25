@@ -10,6 +10,7 @@ import { useI18n } from '../i18n';
 import type { AssetMeta } from '../types';
 import { Badge, Section } from '../ui/common';
 import { prepareImageAsset } from './imageUtil';
+import { diagnoseThumbnail, profileThumbnail, type ThumbnailDiagnosis, type ThumbnailProfile } from './diagnosis';
 
 type Filter = 'all' | 'kept' | 'excluded';
 
@@ -30,13 +31,16 @@ function localCaptureTime(value: string | undefined): string | undefined {
   return value?.replace('T', ' ');
 }
 
-function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void }) {
+function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSaved: (asset: AssetMeta) => void }) {
   const { tr } = useI18n();
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [focalPx, setFocalPx] = useState(String(props.asset.image?.intrinsics?.focalPx ?? ''));
+  const [focalNote, setFocalNote] = useState(props.asset.image?.intrinsics?.focalPxNote ?? '');
+  const [focalError, setFocalError] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -100,6 +104,32 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void }) {
   const { width, height } = imageDimensions(props.asset);
   const image = props.asset.image;
   const intrinsics = image?.intrinsics;
+  async function saveFocalHint() {
+    const value = Number(focalPx);
+    if (!Number.isFinite(value) || value <= 0 || value > 100_000 || !focalNote.trim()) {
+      setFocalError(tr('正のpx値と入力根拠を記入してください。', 'Enter a positive pixel value and its source.'));
+      return;
+    }
+    const updated: AssetMeta = {
+      ...props.asset,
+      image: {
+        ...props.asset.image,
+        intrinsics: {
+          ...props.asset.image?.intrinsics,
+          focalPx: value,
+          focalPxSource: 'user',
+          focalPxNote: focalNote.trim(),
+        },
+      },
+    };
+    try {
+      await updateAsset(props.asset.id, { image: updated.image });
+      props.onSaved(updated);
+      setFocalError('');
+    } catch {
+      setFocalError(tr('焦点距離候補を保存できませんでした。', 'Could not save the focal hint.'));
+    }
+  }
   return (
     <div className="manual-backdrop" role="presentation" onMouseDown={props.onClose}>
       <div
@@ -182,11 +212,14 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void }) {
                   {Math.round(intrinsics.focalPx)} px (
                   {intrinsics.focalPxSource === 'exifFocalPlaneResolution'
                     ? tr('EXIF撮像面解像度から推定', 'estimated from EXIF focal-plane resolution')
-                    : tr('35mm換算値から推定', 'estimated from 35mm equivalent')}
+                    : intrinsics.focalPxSource === 'user'
+                      ? tr('手入力', 'manual entry')
+                      : tr('35mm換算値から推定', 'estimated from 35mm equivalent')}
                   )
                 </dd>
               </>
             )}
+            {intrinsics?.focalPxNote && <><dt>{tr('入力根拠', 'Source note')}</dt><dd>{intrinsics.focalPxNote}</dd></>}
             {image?.orientation !== undefined && (
               <>
                 <dt>{tr('EXIF向き', 'EXIF orientation')}</dt>
@@ -194,6 +227,14 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void }) {
               </>
             )}
           </dl>
+          <div className="focal-editor">
+            <h3>{tr('SfM用の焦点距離候補を記録', 'Record a focal-length hint for SfM')}</h3>
+            <p className="hint">{tr('値はまだ再構成に使用されません。正解値として扱わず、撮影機器の仕様など根拠を残してください。', 'This value is not used for reconstruction yet. Record its source; it is not treated as ground truth.')}</p>
+            <label>{tr('焦点距離 (px)', 'Focal length (px)')} <input type="number" min="0" max="100000" step="any" value={focalPx} onChange={(event) => setFocalPx(event.target.value)} /></label>
+            <label>{tr('入力根拠', 'Source note')} <input type="text" value={focalNote} onChange={(event) => setFocalNote(event.target.value)} /></label>
+            <button type="button" onClick={() => void saveFocalHint()}>{tr('候補を保存', 'Save hint')}</button>
+            {focalError && <p className="warn-box">{focalError}</p>}
+          </div>
         </div>
       </div>
     </div>
@@ -211,6 +252,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<AssetMeta | null>(null);
   const [thumbnailFailures, setThumbnailFailures] = useState(0);
+  const [thumbnailDiagnostics, setThumbnailDiagnostics] = useState<Map<string, ThumbnailDiagnosis>>(new Map());
 
   useEffect(() => {
     let alive = true;
@@ -221,8 +263,11 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
       setAssets(list);
       setUrls(new Map());
       setThumbnailFailures(0);
+      setThumbnailDiagnostics(new Map());
       const map = new Map<string, string>();
       const resolved = new Map<string, AssetMeta>();
+      const profiles: ThumbnailProfile[] = [];
+      const diagnostics = new Map<string, ThumbnailDiagnosis>();
       let failures = 0;
 
       for (const initial of list) {
@@ -269,6 +314,13 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         if (!alive) break;
         resolved.set(asset.id, asset);
         if (thumbnailBlob) {
+          try {
+            const profile = await profileThumbnail(thumbnailBlob, asset.id);
+            diagnostics.set(asset.id, diagnoseThumbnail(profile, profiles));
+            profiles.push(profile);
+          } catch {
+            // 画像一覧は診断不能なサムネイルがあっても表示する。
+          }
           const url = URL.createObjectURL(thumbnailBlob);
           createdUrls.push(url);
           map.set(asset.id, url);
@@ -293,6 +345,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         );
         setUrls(new Map(map));
         setThumbnailFailures(failures);
+        setThumbnailDiagnostics(new Map(diagnostics));
       }
     })().catch(() => {
       // 一覧構築が途中で失敗した場合、まだstateへ渡していないURLもその場で破棄する。
@@ -384,6 +437,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
           {shown.map((a) => {
             const { width, height } = imageDimensions(a);
             const intrinsics = a.image?.intrinsics;
+            const diagnosis = thumbnailDiagnostics.get(a.id);
             return (
               <figure key={a.id} className={`shot ${a.excluded ? 'excluded' : ''}`}>
                 <button
@@ -410,6 +464,10 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
                       <Badge tone={a.quality.sharp ? 'ok' : 'warn'}>{a.quality.blur}</Badge>
                     )}
                     {a.excluded && <Badge tone="err">{tr('除外', 'Excluded')}</Badge>}
+                    {a.quality?.sharp === false && <Badge tone="warn">{tr('ブレ候補', 'Possible blur')}</Badge>}
+                    {diagnosis?.exposure === 'dark' && <Badge tone="warn">{tr('暗い候補', 'Possibly dark')}</Badge>}
+                    {diagnosis?.exposure === 'bright' && <Badge tone="warn">{tr('明るすぎる候補', 'Possibly bright')}</Badge>}
+                    {diagnosis?.similarTo && <Badge tone="warn">{tr('類似候補', 'Similar candidate')}</Badge>}
                     <button
                       type="button"
                       className="mini"
@@ -432,6 +490,15 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
                     </button>
                   </div>
                   <div className="shot-meta">
+                    {diagnosis?.similarTo && (
+                      <button type="button" className="mini" onClick={() => {
+                        const source = assets.find((item) => item.id === diagnosis.similarTo);
+                        if (source) setSelected(source);
+                      }}>
+                        {tr('類似先を開く', 'Open similar image')}: {assets.find((item) => item.id === diagnosis.similarTo)?.name ?? diagnosis.similarTo}
+                      </button>
+                    )}
+                    {!intrinsics?.focalPx && <span>{tr('焦点距離候補なし', 'No focal hint')}</span>}
                     {width !== undefined && height !== undefined && (
                       <span>{Math.round(width)} × {Math.round(height)} px</span>
                     )}
@@ -478,7 +545,11 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
           'Select a card to view the original and capture details. The number is a blur score (higher is sharper). P = captured/imported image; F = extracted video frame.',
         )}
       </p>
-      {selected && <ImageDetailDialog asset={selected} onClose={() => setSelected(null)} />}
+      {selected && <ImageDetailDialog asset={selected} onClose={() => setSelected(null)} onSaved={(updated) => {
+        setSelected(updated);
+        setAssets((previous) => previous.map((asset) => asset.id === updated.id ? updated : asset));
+        props.onChanged();
+      }} />}
     </Section>
   );
 }
