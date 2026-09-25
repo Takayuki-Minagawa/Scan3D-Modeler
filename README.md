@@ -4,6 +4,8 @@
 
 小型対象物を撮影した画像・動画を整理し、3D形状とFEM向けデータ作成の流れを試すための、ブラウザ内で動作する実験的な静的Webアプリです。Vite、React、TypeScriptで実装しています。
 
+[公開版を開く](https://takayuki-minagawa.github.io/Scan3D-Modeler/)
+
 > [!WARNING]
 > 現在の再構成結果は**合成データによるデモ**です。実撮影画像からのSfM/MVS/サーフェス再構成、四面体メッシュ生成、解析ソルバ向け形式の検証は未実装または未検証です。本ソフトウェアを設計判断、製造判断、安全判断、または検証済みFEMモデルの作成に使用しないでください。
 
@@ -87,6 +89,8 @@ npm run typecheck
 ## English
 
 Scan2FEM is an experimental, static web application for organizing photos and videos of small objects and exploring a 3D-shape-to-FEM-data workflow. It runs in the browser and is built with Vite, React, and TypeScript.
+
+[Open the live app](https://takayuki-minagawa.github.io/Scan3D-Modeler/)
 
 > [!WARNING]
 > The current reconstruction output is **synthetic demo data**. SfM/MVS/surface reconstruction from real captures, tetrahedral meshing, and validation of solver-oriented output formats are not implemented or not validated yet. Do not use this software for engineering, manufacturing, safety, or other decisions that require a validated FEM model.
