@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createProject, deleteProject, listProjects } from '../db/projects';
 import { localizeError } from '../errorText';
 import { stopProjectJobs } from '../jobs/runner';
-import { importProjectZip } from '../export/zip';
+import { cleanupStaleZipImports, importProjectZip } from '../export/zip';
 import type { CaptureMethod, Project, ScaleMethod, Unit } from '../types';
 import { useI18n } from '../i18n';
 import { StoragePanel } from '../storage/StoragePanel';
@@ -66,6 +66,7 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
   }
   useEffect(() => {
     void reload();
+    void cleanupStaleZipImports().catch(() => undefined);
     const onFocus = () => void reload();
     window.addEventListener('focus', onFocus);
     return () => {

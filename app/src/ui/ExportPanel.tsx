@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { getAssetBlob, listAssets } from '../db/assets';
 import { getStage } from '../db/stages';
 import { decodeMeshBinary, plyFromPoints, stlFromMesh } from '../export/formats';
-import { exportProjectZip } from '../export/zip';
+import { exportProjectZip, saveProjectZipDirectly } from '../export/zip';
 import { localizeError } from '../errorText';
 import { useI18n } from '../i18n';
 import type { AssetMeta, Project, Stage } from '../types';
@@ -55,22 +55,30 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
       )
     : true;
 
-  async function exportZip() {
+  async function exportZip(direct: boolean) {
     setBusy({
       ja: 'ZIP作成中…(データ量により時間がかかります)',
       en: 'Creating ZIP… (this can take a while for large data)',
     });
     try {
-      const { blob, excludedRunningStages } = await exportProjectZip(props.project.id);
-      downloadBlob(blob, `${props.project.name}.zip`);
+      let excludedRunningStages: number;
+      let sizeText = '';
+      if (direct) {
+        ({ excludedRunningStages } = await saveProjectZipDirectly(props.project.id, `${props.project.name}.zip`));
+      } else {
+        const result = await exportProjectZip(props.project.id);
+        excludedRunningStages = result.excludedRunningStages;
+        sizeText = ` (${fmtBytes(result.blob.size)})`;
+        downloadBlob(result.blob, `${props.project.name}.zip`);
+      }
       setBusy({
         ja:
-          `ZIP出力完了(${fmtBytes(blob.size)})` +
+          `ZIP出力完了${sizeText}` +
           (excludedRunningStages > 0
             ? ` — 実行途中の段階${excludedRunningStages}件は再開情報を持ち出せないため含めていません`
             : ''),
         en:
-          `ZIP export complete (${fmtBytes(blob.size)})` +
+          `ZIP export complete${sizeText}` +
           (excludedRunningStages > 0
             ? ` — ${excludedRunningStages} in-progress stage(s) were omitted because their resume state cannot be exported`
             : ''),
@@ -125,9 +133,16 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
               'For backing up or moving captures and completed stage data between devices. You can import it into this app elsewhere, but in-progress and paused job resume state is not transferred.',
             )}
           </p>
-          <button className="primary" onClick={() => void exportZip()}>
-            {tr('プロジェクトZIPを出力', 'Export project ZIP')}
-          </button>
+          <div className="row wrap">
+            <button className="primary" onClick={() => void exportZip(false)}>
+              {tr('プロジェクトZIPを出力', 'Export project ZIP')}
+            </button>
+            {'showSaveFilePicker' in window && (
+              <button onClick={() => void exportZip(true)}>
+                {tr('大容量ZIPを直接保存', 'Save large ZIP directly')}
+              </button>
+            )}
+          </div>
         </div>
         <div>
           <h3>{tr('点群(PLY)', 'Point cloud (PLY)')}</h3>
@@ -135,6 +150,8 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
             {cloud
               ? tr(`最新: ${cloud.asset.name}(${fmtBytes(cloud.asset.size)})`, `Latest: ${cloud.asset.name} (${fmtBytes(cloud.asset.size)})`)
               : tr('点群データがまだありません', 'No point-cloud data yet')}
+            {cloud?.stage?.origin === 'external' && ` · ${tr('外部取込', 'External import')}`}
+            {cloud?.stage?.demo && ` · ${tr('デモ', 'Demo')}`}
           </p>
           {cloud && calibration && !cloudScaleApplies && (
             <p className="warn-box">
@@ -154,6 +171,8 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
             {mesh
               ? tr(`最新: ${mesh.asset.name}(${fmtBytes(mesh.asset.size)})`, `Latest: ${mesh.asset.name} (${fmtBytes(mesh.asset.size)})`)
               : tr('サーフェスデータがまだありません', 'No surface data yet')}
+            {mesh?.stage?.origin === 'external' && ` · ${tr('外部取込', 'External import')}`}
+            {mesh?.stage?.demo && ` · ${tr('デモ', 'Demo')}`}
           </p>
           {mesh && calibration && !meshScaleApplies && (
             <p className="warn-box">

@@ -62,6 +62,11 @@ export interface Stage {
   status: StageStatus;
   /** 合成デモデータ(実撮影由来ではない)であることの明示 */
   demo?: boolean;
+  /** データの由来。旧データはdemoから判別する。 */
+  origin?: 'demo' | 'capture' | 'external';
+  /** 外部取込時の入力単位。保存座標は常にproject.unit。 */
+  inputUnit?: Unit;
+  sourceFileName?: string;
   params?: Record<string, unknown>;
   stats?: Record<string, string | number>;
   sourceStageId?: string | null;
@@ -88,7 +93,9 @@ export interface CameraIntrinsicsHint {
   sensorWidthMm?: number;
   sensorHeightMm?: number;
   focalPx?: number;
-  focalPxSource?: 'exifFocalPlaneResolution' | 'exif35mmEquivalent';
+  focalPxSource?: 'exifFocalPlaneResolution' | 'exif35mmEquivalent' | 'user';
+  /** 手入力時の根拠（撮影機器の仕様など）。 */
+  focalPxNote?: string;
 }
 
 /** 画像アセットに付随する、言語やUIに依存しない撮影メタデータ。 */

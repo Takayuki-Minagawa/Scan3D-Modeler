@@ -1,4 +1,4 @@
-import { strToU8, strFromU8, unzip, zip, type Zippable } from 'fflate';
+import { strToU8, Zip, ZipPassThrough, Unzip, UnzipInflate } from 'fflate';
 import { db, uid, now } from '../db/db';
 import type { AssetMeta, Project, Stage } from '../types';
 
@@ -46,7 +46,8 @@ const ASSET_KINDS = new Set([
   'mesh',
   'json',
 ]);
-const FOCAL_PX_SOURCES = new Set(['exifFocalPlaneResolution', 'exif35mmEquivalent']);
+const FOCAL_PX_SOURCES = new Set(['exifFocalPlaneResolution', 'exif35mmEquivalent', 'user']);
+const STAGE_ORIGINS = new Set(['demo', 'capture', 'external']);
 const MIN_SCALE_FACTOR = 1e-9;
 const MAX_SCALE_FACTOR = 1e9;
 const MIN_MODEL_DISTANCE = 1e-9;
@@ -269,6 +270,9 @@ function validateStage(value: unknown, index: number): asserts value is Stage {
       'seq',
       'status',
       'demo',
+      'origin',
+      'inputUnit',
+      'sourceFileName',
       'params',
       'stats',
       'sourceStageId',
@@ -283,6 +287,12 @@ function validateStage(value: unknown, index: number): asserts value is Stage {
   expectFiniteNumber(stage.seq, `${path}.seq`, { min: 1, integer: true });
   expectEnum(stage.status, STAGE_STATUSES, `${path}.status`);
   validateOptionalBoolean(stage.demo, `${path}.demo`);
+  if (stage.origin !== undefined) expectEnum(stage.origin, STAGE_ORIGINS, `${path}.origin`);
+  if (stage.inputUnit !== undefined) expectEnum(stage.inputUnit, UNITS, `${path}.inputUnit`);
+  validateOptionalString(stage.sourceFileName, `${path}.sourceFileName`);
+  if (stage.origin === 'external' && (!stage.inputUnit || !stage.sourceFileName || stage.demo)) {
+    schemaError(path);
+  }
   if (stage.params !== undefined) {
     expectRecord(stage.params, `${path}.params`);
     validateJsonData(stage.params, `${path}.params`);
@@ -338,6 +348,7 @@ function validateImageMetadata(value: unknown, path: string): void {
         'sensorHeightMm',
         'focalPx',
         'focalPxSource',
+        'focalPxNote',
       ],
       `${path}.intrinsics`,
     );
@@ -352,6 +363,13 @@ function validateImageMetadata(value: unknown, path: string): void {
         FOCAL_PX_SOURCES,
         `${path}.intrinsics.focalPxSource`,
       );
+    }
+    validateOptionalString(intrinsics.focalPxNote, `${path}.intrinsics.focalPxNote`);
+    if (intrinsics.focalPxSource === 'user' &&
+        (intrinsics.focalPx === undefined ||
+          typeof intrinsics.focalPxNote !== 'string' ||
+          !intrinsics.focalPxNote.trim())) {
+      schemaError(`${path}.intrinsics.focalPxNote`);
     }
   }
 }
@@ -430,19 +448,13 @@ export interface ExportZipResult {
   excludedRunningStages: number;
 }
 
-function zipAsync(data: Zippable): Promise<Uint8Array> {
-  return new Promise((resolve, reject) => {
-    zip(data, { level: 0 }, (err, out) => (err ? reject(err) : resolve(out)));
-  });
+interface ProjectSnapshot {
+  manifest: Manifest;
+  blobs: Map<string, Blob>;
+  excludedRunningStages: number;
 }
 
-function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
-  return new Promise((resolve, reject) => {
-    unzip(data, (err, out) => (err ? reject(err) : resolve(out)));
-  });
-}
-
-export async function exportProjectZip(projectId: string): Promise<ExportZipResult> {
+async function snapshotProject(projectId: string): Promise<ProjectSnapshot> {
   const d = await db();
   // 実行中ジョブはstage/assetを書き換え続けるため、まず停止を求める
   const jobs = await d.getAllFromIndex('jobs', 'byProject', projectId);
@@ -475,38 +487,355 @@ export async function exportProjectZip(projectId: string): Promise<ExportZipResu
   }
   await tx.done;
 
-  const manifest: Manifest = {
+  return { manifest: {
     format: 'scan2fem-project',
     version: 2,
     exportedAt: now(),
     project,
     stages,
     assets,
-  };
-  const files: Zippable = {
-    'project.json': strToU8(JSON.stringify(manifest, null, 1)),
-  };
-  for (const a of assets) {
-    const blob = blobs.get(a.id);
-    if (blob) files[`assets/${a.id}`] = new Uint8Array(await blob.arrayBuffer());
-  }
-  const out = await zipAsync(files);
-  const buf = new ArrayBuffer(out.byteLength);
-  new Uint8Array(buf).set(out);
-  return {
-    blob: new Blob([buf], { type: 'application/zip' }),
+  }, blobs,
     excludedRunningStages: allStages.length - stages.length,
   };
 }
 
+/** 入力Blobをチャンク単位で読み、ZIP出力先のwrite完了を待ってから次へ進む。 */
+async function streamSnapshot(
+  snapshot: ProjectSnapshot,
+  write: (chunk: Uint8Array) => Promise<void>,
+): Promise<void> {
+  let pending = Promise.resolve();
+  let failed: Error | null = null;
+  const zip = new Zip((error, chunk) => {
+    if (error) {
+      failed = error;
+      return;
+    }
+    if (chunk.length > 0) pending = pending.then(() => write(chunk));
+  });
+  try {
+    const manifestFile = new ZipPassThrough('project.json');
+    zip.add(manifestFile);
+    manifestFile.push(strToU8(JSON.stringify(snapshot.manifest)), true);
+    await pending;
+    for (const asset of snapshot.manifest.assets) {
+      const blob = snapshot.blobs.get(asset.id)!;
+      const entry = new ZipPassThrough(`assets/${asset.id}`);
+      zip.add(entry);
+      const reader = blob.stream().getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          entry.push(value);
+          await pending;
+          if (failed) throw failed;
+        }
+        entry.push(new Uint8Array(0), true);
+        await pending;
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    zip.end();
+    await pending;
+    if (failed) throw failed;
+  } catch (error) {
+    zip.terminate();
+    throw error;
+  }
+}
+
+/** File System Access APIが使えないブラウザ向け。元BlobのarrayBuffer全読込は行わない。 */
+export async function exportProjectZip(projectId: string): Promise<ExportZipResult> {
+  const snapshot = await snapshotProject(projectId);
+  const totalBytes = [...snapshot.blobs.values()].reduce((sum, blob) => sum + blob.size, 0);
+  if (totalBytes > 128 * 1024 * 1024) {
+    throw new Error('128MiBを超えるZIPは直接保存に対応したブラウザで出力してください');
+  }
+  const chunks: Uint8Array[] = [];
+  await streamSnapshot(snapshot, async (chunk) => { chunks.push(chunk); });
+  return {
+    blob: new Blob(chunks as BlobPart[], { type: 'application/zip' }),
+    excludedRunningStages: snapshot.excludedRunningStages,
+  };
+}
+
+export async function saveProjectZipDirectly(
+  projectId: string,
+  suggestedName: string,
+): Promise<{ excludedRunningStages: number }> {
+  const picker = (window as Window & {
+    showSaveFilePicker?: (options: unknown) => Promise<FileSystemFileHandle>;
+  }).showSaveFilePicker;
+  if (!picker) throw new Error('このブラウザは直接保存に対応していません');
+  // ユーザー操作の有効期間内にダイアログを開くため、最初のawaitで呼ぶ。
+  const handle = await picker.call(window, { suggestedName, types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }] });
+  const writable = await handle.createWritable();
+  try {
+    const snapshot = await snapshotProject(projectId);
+    await streamSnapshot(snapshot, async (chunk) => { await writable.write(new Uint8Array(chunk)); });
+    await writable.close();
+    return { excludedRunningStages: snapshot.excludedRunningStages };
+  } catch (error) {
+    await writable.abort().catch(() => undefined);
+    throw error;
+  }
+}
+
+const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
+const MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
+const MAX_IN_MEMORY_IMPORT_BYTES = 64 * 1024 * 1024;
+const MAX_ENTRIES = 10_000;
+const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
+
+interface CentralEntry { size: number; crc: number; compression: number }
+
+const CRC_TABLE = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let value = i;
+  for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  CRC_TABLE[i] = value >>> 0;
+}
+
+function updateCrc(crc: number, chunk: Uint8Array): number {
+  for (const byte of chunk) crc = CRC_TABLE[(crc ^ byte) & 255] ^ (crc >>> 8);
+  return crc >>> 0;
+}
+
+function allowedEntryName(name: string): boolean {
+  return name === 'project.json' || /^assets\/[A-Za-z0-9_-]{1,128}$/.test(name);
+}
+
+/** EOCDと中央ディレクトリを先に確認し、欠落・余分な項目・CRC不一致を検出する。 */
+async function readCentralDirectory(file: Blob): Promise<Map<string, CentralEntry>> {
+  const tailStart = Math.max(0, file.size - 65_557);
+  const tail = new DataView(await file.slice(tailStart).arrayBuffer());
+  let eocd = -1;
+  for (let offset = tail.byteLength - 22; offset >= 0; offset--) {
+    if (tail.getUint32(offset, true) === 0x06054b50 &&
+        offset + 22 + tail.getUint16(offset + 20, true) === tail.byteLength) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0 || tail.getUint16(eocd + 4, true) !== 0 ||
+      tail.getUint16(eocd + 6, true) !== 0) throw new Error('ZIPの終端が不正です');
+  const count = tail.getUint16(eocd + 10, true);
+  const centralSize = tail.getUint32(eocd + 12, true);
+  const centralOffset = tail.getUint32(eocd + 16, true);
+  if (count === 0 || count > MAX_ENTRIES || count !== tail.getUint16(eocd + 8, true) ||
+      centralSize > 16 * 1024 * 1024 || centralOffset + centralSize > tailStart + eocd) {
+    throw new Error('ZIPの中央ディレクトリが不正です');
+  }
+  const view = new DataView(await file.slice(centralOffset, centralOffset + centralSize).arrayBuffer());
+  const entries = new Map<string, CentralEntry>();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let offset = 0;
+  for (let i = 0; i < count; i++) {
+    if (offset + 46 > view.byteLength || view.getUint32(offset, true) !== 0x02014b50) {
+      throw new Error('ZIPの中央ディレクトリが途中で途切れています');
+    }
+    const flags = view.getUint16(offset + 8, true);
+    const compression = view.getUint16(offset + 10, true);
+    const crc = view.getUint32(offset + 16, true);
+    const size = view.getUint32(offset + 24, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const end = offset + 46 + nameLength + extraLength + commentLength;
+    if (end > view.byteLength || flags & 1 || ![0, 8].includes(compression) ||
+        view.getUint16(offset + 34, true) !== 0 ||
+        view.getUint32(offset + 42, true) >= centralOffset) {
+      throw new Error('ZIPの項目情報が不正です');
+    }
+    let name: string;
+    try {
+      name = decoder.decode(new Uint8Array(view.buffer, offset + 46, nameLength));
+    } catch {
+      throw new Error('ZIPの項目名が不正です');
+    }
+    if (!allowedEntryName(name) || entries.has(name) ||
+        size > (name === 'project.json' ? MAX_MANIFEST_BYTES : MAX_ENTRY_BYTES)) {
+      throw new Error(`ZIPに許可されない項目があります: ${name}`);
+    }
+    entries.set(name, { size, crc, compression });
+    offset = end;
+  }
+  if (offset !== view.byteLength) throw new Error('ZIPの中央ディレクトリに余分なデータがあります');
+  return entries;
+}
+
+interface ExtractedZip {
+  entries: Map<string, Blob>;
+  cleanup: () => Promise<void>;
+}
+
+const IMPORT_OPFS_PREFIX = 'scan2fem-import-';
+const IMPORT_LOCK = 'scan2fem-zip-import';
+
+/** 再読込などで中断されたOPFSの一時ディレクトリを、他タブの取込と排他して掃除する。 */
+export async function cleanupStaleZipImports(): Promise<void> {
+  const storage = navigator.storage as StorageManager & {
+    getDirectory?: () => Promise<FileSystemDirectoryHandle>;
+  };
+  if (!storage.getDirectory || !navigator.locks) return;
+  await navigator.locks.request(IMPORT_LOCK, async () => {
+    const root = await storage.getDirectory!();
+    const iterable = root as FileSystemDirectoryHandle & {
+      entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+    };
+    for await (const [name, handle] of iterable.entries()) {
+      if (name.startsWith(IMPORT_OPFS_PREFIX) && handle.kind === 'directory') {
+        await root.removeEntry(name, { recursive: true });
+      }
+    }
+  });
+}
+
+async function unzipBounded(file: Blob): Promise<ExtractedZip> {
+  if (file.size === 0 || file.size > MAX_ZIP_BYTES) {
+    throw new Error('ZIPファイルのサイズが許容範囲外です');
+  }
+  const central = await readCentralDirectory(file);
+  const expandedHint = [...central.values()].reduce((sum, entry) => sum + entry.size, 0);
+  if (expandedHint > MAX_EXPANDED_BYTES) {
+    throw new Error('ZIPの展開後サイズが上限を超えています');
+  }
+  const useOpfs = expandedHint > MAX_IN_MEMORY_IMPORT_BYTES;
+  const storage = navigator.storage as StorageManager & {
+    getDirectory?: () => Promise<FileSystemDirectoryHandle>;
+  };
+  if (useOpfs && (!storage.getDirectory || !navigator.locks)) {
+    throw new Error('64MiBを超えるZIPの取込にはOPFSとWeb Locks対応ブラウザが必要です');
+  }
+  const opfsRoot = useOpfs ? await storage.getDirectory!() : null;
+  const tempName = useOpfs ? `${IMPORT_OPFS_PREFIX}${crypto.randomUUID()}` : null;
+  const tempDir = opfsRoot && tempName
+    ? await opfsRoot.getDirectoryHandle(tempName, { create: true })
+    : null;
+  const cleanup = async () => {
+    if (opfsRoot && tempName) await opfsRoot.removeEntry(tempName, { recursive: true });
+  };
+  const entries = new Map<string, Blob>();
+  const staged = new Map<string, Promise<FileSystemFileHandle>>();
+  const writers: Array<Promise<FileSystemWritableFileStream>> = [];
+  const names = new Set<string>();
+  let expandedTotal = 0;
+  let fatal: Error | null = null;
+  let writeQueue = Promise.resolve();
+  const unzip = new Unzip((entry) => {
+    if (fatal) return;
+    const expected = central.get(entry.name);
+    if (names.size >= MAX_ENTRIES || names.has(entry.name) || !expected ||
+        entry.compression !== expected.compression ||
+        (entry.originalSize !== undefined && entry.originalSize !== expected.size)) {
+      fatal = new Error(`ZIPに許可されない項目があります: ${entry.name}`);
+      return;
+    }
+    names.add(entry.name);
+    const parts: Uint8Array[] = [];
+    const stagedHandle = tempDir
+      ? tempDir.getFileHandle(entry.name === 'project.json' ? 'project.json' : entry.name.slice(7), { create: true })
+      : null;
+    if (stagedHandle) staged.set(entry.name, stagedHandle);
+    const writable = stagedHandle?.then((handle) => handle.createWritable());
+    if (writable) writers.push(writable);
+    let size = 0;
+    let crc = 0xffffffff;
+    entry.ondata = (error, chunk, final) => {
+      if (fatal) return;
+      if (error) { fatal = error; return; }
+      size += chunk.length;
+      expandedTotal += chunk.length;
+      crc = updateCrc(crc, chunk);
+      if (size > expected.size ||
+          size > (entry.name === 'project.json' ? MAX_MANIFEST_BYTES : MAX_ENTRY_BYTES) ||
+          expandedTotal > MAX_EXPANDED_BYTES ||
+          (!tempDir && expandedTotal > MAX_IN_MEMORY_IMPORT_BYTES)) {
+        fatal = new Error('ZIPの展開後サイズが上限を超えています');
+        entry.terminate();
+        return;
+      }
+      if (writable) {
+        const copy = chunk.slice();
+        writeQueue = writeQueue.then(async () => {
+          const stream = await writable;
+          if (copy.length) await stream.write(new Uint8Array(copy));
+          if (final) await stream.close();
+        });
+      } else if (chunk.length) {
+        parts.push(chunk.slice());
+      }
+      if (final) {
+        if (size !== expected.size || ((crc ^ 0xffffffff) >>> 0) !== expected.crc) {
+          fatal = new Error(`ZIPの項目が破損しています: ${entry.name}`);
+          return;
+        }
+        if (!writable) entries.set(entry.name, new Blob(parts as BlobPart[]));
+      }
+    };
+    try { entry.start(); } catch (error) { fatal = error instanceof Error ? error : new Error(String(error)); }
+  });
+  unzip.register(UnzipInflate);
+  const reader = file.stream().getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (let offset = 0; offset < value.length; offset += 8192) {
+        unzip.push(value.subarray(offset, offset + 8192));
+        if (fatal) throw fatal;
+        await writeQueue;
+      }
+    }
+    unzip.push(new Uint8Array(0), true);
+    if (fatal) throw fatal;
+    await writeQueue;
+    if (names.size !== central.size || (!tempDir && entries.size !== names.size)) {
+      throw new Error('ZIPの項目が途中で途切れています');
+    }
+    if (tempDir) {
+      for (const [name, handle] of staged) entries.set(name, await (await handle).getFile());
+      if (entries.size !== names.size) throw new Error('ZIPの一時保存が途中で途切れています');
+    }
+    return { entries, cleanup };
+  } catch (error) {
+    await writeQueue.catch(() => undefined);
+    for (const writer of writers) {
+      await writer.then((stream) => stream.abort()).catch(() => undefined);
+    }
+    await cleanup().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** インポート。ID衝突を避けるため全IDを振り直して新規プロジェクトとして取り込む */
 export async function importProjectZip(file: Blob): Promise<Project> {
-  const entries = await unzipAsync(new Uint8Array(await file.arrayBuffer()));
-  const manifestRaw = entries['project.json'];
+  if (navigator.locks) {
+    return navigator.locks.request(IMPORT_LOCK, () => importProjectZipUnlocked(file));
+  }
+  return importProjectZipUnlocked(file);
+}
+
+async function importProjectZipUnlocked(file: Blob): Promise<Project> {
+  const { entries, cleanup } = await unzipBounded(file);
+  try {
+    return await importProjectEntries(entries);
+  } finally {
+    await cleanup();
+  }
+}
+
+async function importProjectEntries(entries: Map<string, Blob>): Promise<Project> {
+  const manifestRaw = entries.get('project.json');
   if (!manifestRaw) throw new Error('project.json がありません(scan2femのZIPではありません)');
   let parsed: unknown;
   try {
-    parsed = JSON.parse(strFromU8(manifestRaw)) as unknown;
+    parsed = JSON.parse(await manifestRaw.text()) as unknown;
   } catch {
     throw new Error('project.json がJSONとして不正です');
   }
@@ -587,6 +916,11 @@ export async function importProjectZip(file: Blob): Promise<Project> {
     }
     assetById.set(asset.id, asset);
   }
+  if (entries.size !== manifest.assets.length + 1 ||
+      [...entries.keys()].some((name) => name !== 'project.json' &&
+        !assetById.has(name.slice('assets/'.length)))) {
+    throw new Error('ZIPにマニフェストから参照されない項目があります');
+  }
 
   const calibration = manifest.project.scaleCalibration as
     | (NonNullable<Project['scaleCalibration']> & {
@@ -653,10 +987,10 @@ export async function importProjectZip(file: Blob): Promise<Project> {
   // プロジェクトができてしまうため)
   const broken: string[] = [];
   for (const a of manifest.assets) {
-    const data = entries[`assets/${a.id}`];
+    const data = entries.get(`assets/${a.id}`);
     if (!data) broken.push(`${a.name}(本体なし)`);
-    else if (typeof a.size === 'number' && data.byteLength !== a.size) {
-      broken.push(`${a.name}(サイズ不一致: ${data.byteLength}≠${a.size})`);
+    else if (typeof a.size === 'number' && data.size !== a.size) {
+      broken.push(`${a.name}(サイズ不一致: ${data.size}≠${a.size})`);
     }
   }
   if (broken.length > 0) {
@@ -730,14 +1064,10 @@ export async function importProjectZip(file: Blob): Promise<Project> {
     },
   }));
 
-  // ArrayBuffer/Blob生成はtransaction開始前に完了させる。大容量データの
-  // allocationが同期throwしても、DB書込みを1件もqueueしていないため
-  // 部分プロジェクトも未処理のrequest rejectionも残らない。
+  // Blob準備はtransaction開始前に完了させる。途中の失敗で部分取込を残さない。
   const preparedAssets = assets.map(({ meta, oldId }) => {
-    const data = entries[`assets/${oldId}`]; // 存在・サイズは上で検証済み
-    const buf = new ArrayBuffer(data.byteLength);
-    new Uint8Array(buf).set(data);
-    return { meta, blob: new Blob([buf], { type: meta.mime }) };
+    const data = entries.get(`assets/${oldId}`)!; // 存在・サイズは上で検証済み
+    return { meta, blob: data.slice(0, data.size, meta.mime) };
   });
 
   const d = await db();

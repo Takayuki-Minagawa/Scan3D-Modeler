@@ -547,6 +547,15 @@ label.check {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.focal-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+.focal-editor h3 { margin: 0; }
+.focal-editor label { display: grid; gap: 4px; }
+.focal-editor input { width: 100%; min-width: 0; }
+.focal-editor button { justify-self: start; }
 
 /* パイプライン */
 .stage-flow {

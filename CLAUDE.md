@@ -19,6 +19,8 @@ npm run dev        # 開発サーバ(localhost:5173)
 npm run build      # tsc + vite build(コミット前に必ず通すこと)
 ```
 
+開発中のGitHub Actionsは禁止。ビルドと検査はローカルで行い、GitHub Pages公開時のみPages内部の実行を許可する。
+
 ## 設計上の約束
 
 - 段階データ(stages)は**上書きせず追記**(seqを増やす)。使用書§25の履歴要件
