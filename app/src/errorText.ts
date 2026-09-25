@@ -66,6 +66,12 @@ export function formatAppError(error: unknown, language: Language): string {
       'The saved scale factor is invalid. Calibrate the scale again.',
     'スケール適用後の座標が有効範囲を超えています。校正をやり直してください':
       'Scaled coordinates exceed the supported range. Calibrate the scale again.',
+    'PLYヘッダが不正か長すぎます': 'The PLY header is invalid or too long.',
+    'PLYの要素数が不正です': 'The PLY element count is invalid.',
+    'PLYの頂点数または面数が上限を超えています':
+      'The PLY vertex or face count exceeds the import limit.',
+    'STLの面数またはファイル長が不正です':
+      'The STL face count or file length is invalid.',
   };
   if (exact[message]) return exact[message];
 

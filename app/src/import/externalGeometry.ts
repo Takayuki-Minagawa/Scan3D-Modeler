@@ -17,6 +17,47 @@ export interface ParsedGeometry {
   coordinateUnit: Unit;
 }
 
+/** Loaderによる配列確保より前に、ファイルが宣言する要素数を制限する。 */
+function checkGeometryHeader(buffer: ArrayBuffer, extension: 'ply' | 'stl'): void {
+  const bytes = new Uint8Array(buffer);
+  if (extension === 'ply') {
+    const prefix = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 65_536)));
+    const end = prefix.search(/^end_header\s*$/m);
+    if (!/^ply(?:\r\n|\r|\n)/.test(prefix) || end < 0) {
+      throw new Error('PLYヘッダが不正か長すぎます');
+    }
+    let vertices = 0;
+    let faces = 0;
+    for (const line of prefix.slice(0, end).split(/\r\n|\r|\n/)) {
+      if (!/^element\s/.test(line.trim())) continue;
+      const match = /^element\s+(\S+)\s+(\d+)\s*$/.exec(line.trim());
+      if (!match) throw new Error('PLYの要素数が不正です');
+      const count = Number(match[2]);
+      if (!Number.isSafeInteger(count)) throw new Error('PLYの要素数が不正です');
+      if (match[1] === 'vertex') vertices += count;
+      if (match[1] === 'face') faces += count;
+      if (vertices > MAX_GEOMETRY_VERTICES || faces > MAX_GEOMETRY_TRIANGLES) {
+        throw new Error('PLYの頂点数または面数が上限を超えています');
+      }
+    }
+    return;
+  }
+
+  // STLLoaderは先頭にsolidがなければbinary STLとして面数分の配列を確保する。
+  if (bytes.length < 84) return;
+  const asciiPrefix = [0, 1, 2, 3, 4].some((offset) =>
+    bytes[offset] === 115 && bytes[offset + 1] === 111 && bytes[offset + 2] === 108 &&
+    bytes[offset + 3] === 105 && bytes[offset + 4] === 100,
+  );
+  const faces = new DataView(buffer).getUint32(80, true);
+  if (!asciiPrefix || 84 + faces * 50 === bytes.length) {
+    if (faces > MAX_GEOMETRY_TRIANGLES || faces * 3 > MAX_GEOMETRY_VERTICES ||
+        84 + faces * 50 > bytes.length) {
+      throw new Error('STLの面数またはファイル長が不正です');
+    }
+  }
+}
+
 /** 外部形状の検査を完了してから保存する。STL/PLYは単位を規定しないため利用者に選択してもらう。 */
 export async function parseExternalGeometry(
   file: File,
@@ -32,6 +73,7 @@ export async function parseExternalGeometry(
   }
 
   const buffer = await file.arrayBuffer();
+  checkGeometryHeader(buffer, extension);
   const geometry = extension === 'ply'
     ? new (await import('three/examples/jsm/loaders/PLYLoader.js')).PLYLoader().parse(buffer)
     : new (await import('three/examples/jsm/loaders/STLLoader.js')).STLLoader().parse(buffer);
