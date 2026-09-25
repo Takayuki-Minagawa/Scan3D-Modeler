@@ -570,7 +570,7 @@ export async function saveProjectZipDirectly(
   }).showSaveFilePicker;
   if (!picker) throw new Error('このブラウザは直接保存に対応していません');
   // ユーザー操作の有効期間内にダイアログを開くため、最初のawaitで呼ぶ。
-  const handle = await picker({ suggestedName, types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }] });
+  const handle = await picker.call(window, { suggestedName, types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }] });
   const writable = await handle.createWritable();
   try {
     const snapshot = await snapshotProject(projectId);
@@ -586,6 +586,7 @@ export async function saveProjectZipDirectly(
 const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
+const MAX_IN_MEMORY_IMPORT_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRIES = 10_000;
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 
@@ -699,7 +700,10 @@ async function unzipBounded(file: Blob): Promise<ExtractedZip> {
   }
   const central = await readCentralDirectory(file);
   const expandedHint = [...central.values()].reduce((sum, entry) => sum + entry.size, 0);
-  const useOpfs = expandedHint > 64 * 1024 * 1024;
+  if (expandedHint > MAX_EXPANDED_BYTES) {
+    throw new Error('ZIPの展開後サイズが上限を超えています');
+  }
+  const useOpfs = expandedHint > MAX_IN_MEMORY_IMPORT_BYTES;
   const storage = navigator.storage as StorageManager & {
     getDirectory?: () => Promise<FileSystemDirectoryHandle>;
   };
@@ -746,8 +750,10 @@ async function unzipBounded(file: Blob): Promise<ExtractedZip> {
       size += chunk.length;
       expandedTotal += chunk.length;
       crc = updateCrc(crc, chunk);
-      if (size > (entry.name === 'project.json' ? MAX_MANIFEST_BYTES : MAX_ENTRY_BYTES) ||
-          expandedTotal > MAX_EXPANDED_BYTES) {
+      if (size > expected.size ||
+          size > (entry.name === 'project.json' ? MAX_MANIFEST_BYTES : MAX_ENTRY_BYTES) ||
+          expandedTotal > MAX_EXPANDED_BYTES ||
+          (!tempDir && expandedTotal > MAX_IN_MEMORY_IMPORT_BYTES)) {
         fatal = new Error('ZIPの展開後サイズが上限を超えています');
         entry.terminate();
         return;
