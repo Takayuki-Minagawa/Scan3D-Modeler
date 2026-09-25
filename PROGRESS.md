@@ -215,7 +215,7 @@ LGTM付きレビューの軽微な提案4件を確認し、次のとおり反映
 - **M4/F3:** Blob.streamとfflateの逐次ZIP生成。対応ブラウザに直接保存を用意し、通常ダウンロードは128MiBに制限。取込はZIPを逐次展開し、中央ディレクトリ、エントリ名/数、CRC、実際の展開後サイズ、マニフェスト参照を検査してから単一transactionで確定。64MiB超の展開データはOPFSへ一時退避し、成功・失敗後に掃除。再読込で残った一時ディレクトリは次回起動時にWeb Locksの排他下で掃除する。
 - **ローカル試験:** `npm run typecheck`/`npm run build`成功。ブラウザでPLY点群/面、ASCII/binary STL取込、外部由来表示、暗い画像・明るい画像・近似重複の候補表示、焦点距離候補の再読込後保持、旧v1 ZIP復元、余分な項目・展開後容量超過・CRC不一致・破損ZIPの拒否、ZIP出力を確認。不正座標PLYは保存前に拒否。65MiB展開ZIPのOPFS経由取込と、CRC不一致時の拒否・容量非増加、取込後のBlob再出力を確認。
 - **PRレビュー:** PLYの宣言頂点数が上限を超えてもローダーが先に配列確保する問題を再現し、PLY/STLヘッダの解析前検査を追加。通常PLY取込と上限超過PLY/STLの拒否をブラウザで再確認。ZIPの宣言サイズ超過時も展開中に拒否するよう補強。サブエージェント再レビューで追加のマージ阻害問題なし。PR #3はmainへマージ済み。
-- **M6/公開:** ローカルの `npm run build` で生成した `app/dist` を `gh-pages` ブランチのルートへ手動配置（`cb2340a`）。Pagesを同ブランチから配信し、最終公開時にActionsを再有効化。開発用workflowは復活させていない。[公開URL](https://takayuki-minagawa.github.io/Scan3D-Modeler/)でアプリ起動、新ビルドJS取得、外部PLY/STL案内、WASM並列の分離実行表示を確認。公開URLでのオフライン再起動と実機カメラは未確認。
+- **M6/公開:** ローカルの `npm run build` で生成した `app/dist` を `gh-pages` ブランチのルートへ手動配置（`cb2340a`）。Pagesを同ブランチから配信し、最終公開時にActionsを再有効化。開発用workflowは復活させていない。[公開URL](https://takayuki-minagawa.github.io/Scan3D-Modeler/)でアプリ起動、新ビルドJS取得、外部PLY/STL案内、WASM並列の分離実行表示を確認。Edge DevToolsで通信をOfflineにして再読込後も起動画面が表示され、通信設定を復元した。実機カメラは未確認。
 
 ## 次にやること(優先順)
 
