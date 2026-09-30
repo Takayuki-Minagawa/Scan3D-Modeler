@@ -38,12 +38,16 @@ const PLY_BYTES: Record<PlyType, number> = {
  */
 function parsePly(buffer: ArrayBuffer, factor: number): { positions: Float32Array; indices?: Uint32Array } {
   const bytes = new Uint8Array(buffer);
-  const prefix = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 65_536)));
-  const end = /^end_header(?:\r\n|\r|\n)/m.exec(prefix);
-  if (!/^ply(?:\r\n|\r|\n)/.test(prefix) || !end) {
+  // Single-byte decoding keeps offsets equal to byte positions, including comments.
+  // Follow the magic line's terminator: a CR-only header may be followed by a binary
+  // payload whose first byte is LF, which must not be consumed as a CRLF terminator.
+  const prefix = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 65_536)));
+  const magic = /^ply(\r\n|\r|\n)/.exec(prefix);
+  const end = magic && new RegExp(`^end_header${magic[1]}`, 'm').exec(prefix);
+  if (!end) {
     throw new Error('PLYヘッダが不正か長すぎます');
   }
-  const headerBytes = new TextEncoder().encode(prefix.slice(0, end.index + end[0].length)).length;
+  const headerBytes = end.index + end[0].length;
   const elements: PlyElement[] = [];
   let format = '';
   let totalCount = 0;

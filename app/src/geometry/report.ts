@@ -28,8 +28,14 @@ export function createGeometryReport(
       fileName: entry.stage?.sourceFileName ?? entry.asset.name,
       kind: entry.asset.kind,
       origin: entry.stage?.demo ? 'demo' : entry.stage?.origin ?? 'unknown',
+      inputUnit: entry.stage?.inputUnit ?? null,
     },
     scale: diagnosticScale(project, entry),
+    calibration: diagnosticScale(project, entry).status === 'calibrated' ? {
+      sourceStageId: project.scaleCalibration!.sourceStageId ?? null,
+      sourceAssetId: project.scaleCalibration!.sourceAssetId ?? null,
+      updatedAt: project.scaleCalibration!.updatedAt ?? null,
+    } : null,
     methods: {
       bounds: 'axis-aligned; all stored vertices; project coordinate axes',
       coordinates: 'Float32 after applying the source-matched calibration, as for PLY/STL export',

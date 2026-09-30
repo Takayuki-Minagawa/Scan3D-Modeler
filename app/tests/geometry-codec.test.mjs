@@ -110,3 +110,19 @@ test('binary STL exports still reimport as mesh after shared geometry validation
   assert.deepEqual(parsed.positions, positions);
   assert.deepEqual(parsed.indices, indices);
 });
+test('binary PLY preserves a payload starting with LF after CR-only headers', async () => {
+  for (const newline of ['\r', '\n', '\r\n']) {
+    const header = new TextEncoder().encode([
+      'ply', 'format binary_little_endian 1.0', 'comment 日本語コメント',
+      'element vertex 1', 'property float x', 'property float y', 'property float z', 'end_header', '',
+    ].join(newline));
+    const bytes = new Uint8Array(header.length + 12);
+    bytes.set(header);
+    const payload = new DataView(bytes.buffer, header.length);
+    payload.setUint32(0, 0x3f80000a, true);
+    payload.setFloat32(4, 2, true);
+    payload.setFloat32(8, 3, true);
+    const parsed = await parseExternalGeometry(new File([bytes], 'cr-header.ply'), 'mm', 'mm');
+    assert.deepEqual([...parsed.positions], [Math.fround(1.0000011920928955), 2, 3]);
+  }
+});

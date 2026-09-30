@@ -26,6 +26,8 @@ test('report records calibrated units, source, exact metrics and untested condit
   assert.equal(report.source.origin, 'external');
   assert.equal(report.project.unit, 'mm');
   assert.deepEqual(report.scale, { factor: 2, status: 'calibrated' });
+  assert.equal(report.calibration.sourceStageId, 'dense-1');
+  assert.equal(report.calibration.sourceAssetId, 'cloud-1');
   assert.deepEqual(report.diagnostics.bounds.size, [2, 2, 0]);
   assert.equal(report.diagnostics.surfaceArea, 2);
   assert.ok(report.unchecked.includes('self-intersections'));
@@ -39,6 +41,7 @@ test('unrelated calibration is never applied and legacy demo provenance is prese
   assert.deepEqual(diagnosticScale(project, other), { factor: 1, status: 'different-source' });
   assert.deepEqual(diagnosticScale({ ...project, scaleCalibration: undefined }, other), { factor: 1, status: 'not-calibrated' });
   assert.equal(createGeometryReport(project, other, analyzeGeometry(positions, indices)).source.origin, 'demo');
+  assert.equal(createGeometryReport(project, other, analyzeGeometry(positions, indices)).calibration, null);
 });
 
 function mockWorker(t) {
