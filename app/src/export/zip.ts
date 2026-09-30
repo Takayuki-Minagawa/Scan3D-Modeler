@@ -1,6 +1,7 @@
 import { strToU8, Zip, ZipPassThrough, Unzip, UnzipInflate } from 'fflate';
 import { db, uid, now } from '../db/db';
 import type { AssetMeta, Project, Stage } from '../types';
+import { validateGeometryBlob } from '../geometry/workerClient';
 
 /**
  * プロジェクトZIP入出力(作業計画 1A-3)。
@@ -999,6 +1000,17 @@ async function importProjectEntries(entries: Map<string, Blob>): Promise<Project
     throw new Error(
       `ZIP内のアセット本体が欠落・破損しています: ${head}${rest}。壊れたZIPの可能性があるためインポートを中止しました(何も取り込んでいません)`,
     );
+  }
+
+  // CRC/byte counts do not validate XYZ values or triangle indices. Check every geometry
+  // in a Worker before the first database write, including legacy ZIPs.
+  for (const asset of manifest.assets) {
+    if (asset.kind !== 'mesh' && asset.kind !== 'pointcloud') continue;
+    try {
+      await validateGeometryBlob(entries.get(`assets/${asset.id}`)!, asset.kind);
+    } catch {
+      throw new Error(`ZIP内の形状データが不正です: ${asset.name}。何も取り込んでいません`);
+    }
   }
 
   const idMap = new Map<string, string>();

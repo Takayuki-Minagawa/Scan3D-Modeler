@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { getAssetBlob, listAssets } from '../db/assets';
 import { updateProjectScaleCalibration } from '../db/projects';
-import { getStage } from '../db/stages';
 import { localizeError } from '../errorText';
-import { decodeMeshBinary } from '../export/formats';
+import { listGeometryAssets, loadGeometry, type GeometryAsset } from '../geometry/repository';
 import { useI18n } from '../i18n';
-import type { AssetMeta, Project, Stage } from '../types';
+import type { Project } from '../types';
 import { Badge, Section } from '../ui/common';
 import { ThreeView, type MeasurementPoint } from './threeView';
 import {
@@ -17,10 +15,7 @@ import {
   type ScaleCalibrationSource,
 } from './scale';
 
-interface Loaded {
-  asset: AssetMeta;
-  stage?: Stage;
-}
+type Loaded = GeometryAsset;
 
 const EMPTY_COORDINATES = ['', '', '', '', '', ''] as const;
 
@@ -135,39 +130,23 @@ export function ViewerPanel(props: {
       try {
         // I/Oとdecodeはすべてlocalへ準備し、最後のalive確認後に一括commitする。
         // cleanup済みeffectがThreeViewへ途中結果を書き、新effectを上書きするのを防ぐ。
-        const [clouds, meshes] = await Promise.all([
-          listAssets(props.project.id, ['pointcloud']),
-          listAssets(props.project.id, ['mesh']),
-        ]);
+        const entries = await listGeometryAssets(props.project.id);
         if (!alive) return;
 
-        const cloudAsset = clouds.at(-1);
+        const cloudEntry = entries.filter((entry) => entry.asset.kind === 'pointcloud').at(-1);
         let nextCloud: { loaded: Loaded; points: Float32Array } | null = null;
-        if (cloudAsset) {
-          const [blob, stage] = await Promise.all([
-            getAssetBlob(cloudAsset.id),
-            cloudAsset.stageId ? getStage(cloudAsset.stageId) : undefined,
-          ]);
-          if (!blob) throw new Error(`点群「${cloudAsset.name}」の本体データがありません`);
-          const buf = await blob.arrayBuffer();
-          nextCloud = {
-            loaded: { asset: cloudAsset, stage },
-            points: new Float32Array(buf),
-          };
+        if (cloudEntry) {
+          const geometry = await loadGeometry(cloudEntry);
+          nextCloud = { loaded: cloudEntry, points: geometry.positions };
         }
 
-        const meshAsset = meshes.at(-1);
+        const meshEntry = entries.filter((entry) => entry.asset.kind === 'mesh').at(-1);
         let nextMesh:
           | { loaded: Loaded; positions: Float32Array; indices: Uint32Array }
           | null = null;
-        if (meshAsset) {
-          const [blob, stage] = await Promise.all([
-            getAssetBlob(meshAsset.id),
-            meshAsset.stageId ? getStage(meshAsset.stageId) : undefined,
-          ]);
-          if (!blob) throw new Error(`サーフェス「${meshAsset.name}」の本体データがありません`);
-          const decoded = decodeMeshBinary(await blob.arrayBuffer());
-          nextMesh = { loaded: { asset: meshAsset, stage }, ...decoded };
+        if (meshEntry) {
+          const decoded = await loadGeometry(meshEntry);
+          nextMesh = { loaded: meshEntry, positions: decoded.positions, indices: decoded.indices! };
         }
 
         if (!alive) return;

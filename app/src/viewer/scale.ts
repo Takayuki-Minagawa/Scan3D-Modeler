@@ -1,5 +1,6 @@
 import type { AssetMeta, ScaleCalibration, Stage, Unit } from '../types';
 import type { MeasurementPoint } from './threeView';
+import { validatePositions } from '../geometry/validation';
 
 export interface ScaleCalibrationSource {
   stageId?: string;
@@ -84,6 +85,7 @@ export function makeScaleCalibration(
 
 /** 元配列を上書きせず、出力用座標へ校正倍率を適用する。 */
 export function scaledPositions(positions: Float32Array, factor: number): Float32Array {
+  validatePositions(positions);
   if (!isValidScaleFactor(factor)) {
     throw new Error('保存済みのスケール倍率が不正です。校正をやり直してください');
   }
@@ -91,7 +93,7 @@ export function scaledPositions(positions: Float32Array, factor: number): Float3
   const scaled = new Float32Array(positions.length);
   for (let index = 0; index < positions.length; index += 1) {
     const value = positions[index] * factor;
-    if (!Number.isFinite(value)) {
+    if (!Number.isFinite(value) || !Number.isFinite(Math.fround(value))) {
       throw new Error('スケール適用後の座標が有効範囲を超えています。校正をやり直してください');
     }
     scaled[index] = value;
