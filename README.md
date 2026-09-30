@@ -83,7 +83,7 @@ PLY 1.0はASCII、binary little-endian、binary big-endianに対応します。�
 - アプリはサーバを必要としない静的構成です。長時間ジョブはブラウザ内のWeb WorkerとIndexedDBを利用します。
 - 実再構成用のWASMコンポーネントはまだ同梱していません。配布版はCOOP/COEP相当の応答を行うService Workerを備え、`crossOriginIsolated` の状態を画面に表示します。
 - PWAは起動に必須のHTML/JavaScript/CSSだけを原子的にキャッシュし、遅延読込chunk・アイコン・ライセンス文書はアプリ起動後のアイドル時に個別失敗を許容して追加保存します。データ節約設定または低速回線では追加保存を行わず、利用時に保存します。更新版は作業中に強制再読込せず、画面の更新操作を選んだ時に切り替えます。オフライン利用は最初のオンライン読込と準備完了後に有効です。
-- 3Dビューアと外部形状パーサは必要時に読み込まれます。外部形状の解析と形状診断はWorkerで行います。現ビルドの初期chunkは約309KBです。
+- 3Dビューアと外部形状パーサは必要時に読み込まれます。外部形状の解析と形状診断はWorkerで行います。現ビルドの初期chunkは約313KBです。
 - 保存形状の読込・検証をビューア、出力、診断で共通化しています。ZIP復元時も形状本体をDBへの最初の書込み前に検査し、破損した座標や面索引を含むZIPを部分保存せず拒否します。
 - 64MiB超のZIP展開データはOPFSを一時置場に使用します。OPFSまたはWeb Locks非対応ブラウザでは、そのサイズのZIP取込を拒否します。
 - 開発中のGitHub Actionsと自動公開ワークフローは停止しています。検証はローカルの `npm test` と `npm run build` で行います。GitHub Pages公開時のみPages内部の実行を許可します。
@@ -183,7 +183,7 @@ Edge and duplicate-face checks run only when both vertex and triangle counts are
 - This is a serverless static application. Long-running jobs use browser Web Workers and IndexedDB.
 - No WASM reconstruction component is bundled yet. The production app includes a Service Worker that supplies COOP/COEP-equivalent responses and reports `crossOriginIsolated` status in the UI.
 - The PWA atomically precaches only the HTML/JavaScript/CSS required to boot. Lazy chunks, icons, and license documents are cached independently while the app is idle, so an optional download failure does not block installation. That warmup is skipped on data-saving or slow connections and those resources are cached when used instead. An update does not force-reload active work; it switches only after the on-screen update action is selected. Offline use becomes available after the first online load and preparation.
-- The 3D viewer and external geometry parsers load on demand. External geometry parsing and geometry inspection run in Workers. The current initial JavaScript chunk is about 309 KB.
+- The 3D viewer and external geometry parsers load on demand. External geometry parsing and geometry inspection run in Workers. The current initial JavaScript chunk is about 313 KB.
 - The viewer, exports and diagnostics share stored-geometry loading and validation. ZIP restoration also checks geometry payloads before the first database write, rejecting invalid coordinates or face indices without saving a partial project.
 - ZIPs with over 64 MiB of expanded data use OPFS for temporary staging; importing them requires OPFS and Web Locks support.
 - GitHub Actions and automatic deployment workflows are disabled during development. Validation uses local `npm test` and `npm run build`; only the final GitHub Pages publication may run GitHub's internal Pages workflow.
