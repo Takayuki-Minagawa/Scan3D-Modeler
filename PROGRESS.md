@@ -13,7 +13,7 @@
 MITライセンス・依存ライセンス検査、容量保全、保存サムネイル/EXIF、2点スケール、COI対応PWA、ビューアのコード分割が入った。
 実再構成(OpenMVG/自前MVS/PoissonRecon/Manifold/fTetWild のWASM化)は**Emscripten未整備・実測条件未充足でソースビルド未実施**。2026-09-25時点でCMakeは利用可能になったが、引き続きスタブ+合成デモで代替中。
 2026-09-25にWeb・GitHub調査に基づくF1〜F3を実装し、[PR #3](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/3)をレビュー・修正後にマージした。作業用の追加機能計画MDは整理のため削除。開発中のGitHub Actionsは禁止、最終公開時のGitHub Pagesのみ許可。
-2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。追加のブラウザ確認、PR作成・レビューは進行中で、今回分はまだ公開していない。
+2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)を作成し、28テスト・本番ビルド・ブラウザ確認・独立レビューと修正を完了。マージ可能な状態で、今回分は未マージ・未公開。
 
 ```
 cd app && npm install && npm run dev   # http://localhost:5173
