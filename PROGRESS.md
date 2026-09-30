@@ -3,7 +3,7 @@
 **このファイルは開発の中断・再開のための引き継ぎ台帳です。**
 作業を再開するときは、①このファイル ②[Webアプリ構築_作業計画.md](Webアプリ構築_作業計画.md) ③`git log` の3つを読めば状況を把握できます。作業を進めたら必ずこのファイルを更新してください。
 
-最終更新: 2026-09-30(形状診断・形状検証の共通化、PR #4マージ・作業ブランチ整理)
+最終更新: 2026-09-30(PR #4マージ・作業ブランチ整理・GitHub Pages公開)
 
 ---
 
@@ -13,7 +13,7 @@
 MITライセンス・依存ライセンス検査、容量保全、保存サムネイル/EXIF、2点スケール、COI対応PWA、ビューアのコード分割が入った。
 実再構成(OpenMVG/自前MVS/PoissonRecon/Manifold/fTetWild のWASM化)は**Emscripten未整備・実測条件未充足でソースビルド未実施**。2026-09-25時点でCMakeは利用可能になったが、引き続きスタブ+合成デモで代替中。
 2026-09-25にWeb・GitHub調査に基づくF1〜F3を実装し、[PR #3](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/3)をレビュー・修正後にマージした。作業用の追加機能計画MDは整理のため削除。開発中のGitHub Actionsは禁止、最終公開時のGitHub Pagesのみ許可。
-2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)は28テスト・本番ビルド・ブラウザ確認・独立レビューと修正を経てmainへマージ済み（`e5137c9`）。今回分のPages公開は未実施。
+2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)は28テスト・本番ビルド・ブラウザ確認・独立レビューと修正を経てmainへマージ済み（`e5137c9`）。[GitHub Pages公開版](https://takayuki-minagawa.github.io/Scan3D-Modeler/)も更新済み（公開コミット`364bbde`）。
 
 ```
 cd app && npm install && npm run dev   # http://localhost:5173
@@ -237,7 +237,7 @@ Web、GitHubの一次資料と現在のコードを照合し、画像セット�
 - **非破壊診断:** 「形状診断」タブで保存履歴を選択し、頂点・三角形数、外接箱の寸法・最小／最大座標、三角形面積合計、面積0の退化面、境界辺、非多様体辺、共有辺の向き不整合、重複面を表示する。診断用の頂点統合は座標完全一致だけ。退化面を辺集計から除き、重複面は面積に含める。辺・重複面は20万頂点／20万三角形を上限として、超過時は未実施を表示する。
 - **校正と記録:** 対象と由来が一致する校正だけをPLY/STL出力と同じFloat32座標へ適用。JSONにschemaVersion、対象asset／stage、由来、単位、倍率、作成日時、検査条件と未検査項目を保存する。Workerは中止、画面離脱、30秒の時間切れで終了。元形状は変更せず、自己交差・頂点多様体性・実形状の精度・FEM適合性は未検査と明示する。
 - **ローカル検証:** `npm test` の28テスト、`npm run typecheck`、`npm run build`、ライセンス検査、`git diff --check` が成功。解析解を持つ四面体・平面、STL形式の独立頂点、退化面／微小面／重複面／3面共有辺、点群、校正倍率と面積、検査上限、不正座標・索引・内部バイナリ、PLYの色／UV付き面・四角形・両エンディアン・破損入力、STL再取込を確認した。レポートの単位・由来・JSON直列化、Workerの事前中止／実行中中止／エラー／時間切れも検査。初期JavaScript chunkは約313KB。
-- **運用:** 作業開始時に `codex/reconstruction-quality-refactor` ブランチを作成し、GitHub Actionsを無効化。開発中はローカル検証のみを実施し、workflowは追加していない。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)を作成し、独立した2名のサブエージェントでレビュー後、ユーザーの指示でmainへマージした。Pages公開は行っていない。
+- **運用:** 作業開始時に `codex/reconstruction-quality-refactor` ブランチを作成し、GitHub Actionsを無効化。開発中はローカル検証のみを実施し、workflowは追加していない。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)を作成し、独立した2名のサブエージェントでレビュー後、ユーザーの指示でmainへマージした。追加指示に従い、最後のGitHub Pages公開時だけActionsを利用した。
 
 ### PR #4レビュー・検証・整理
 
@@ -248,6 +248,12 @@ Web、GitHubの一次資料と現在のコードを照合し、画像セット�
 - 開発用の推移依存だけを互換更新（brace-expansion 1.1.21、nanoid 3.3.19、postcss 8.5.28）し、npm監査の高3件を0件へ解消。本番依存・配布ライセンス通知の変更なし。
 - 一時作業計画と完了済みの追加機能・ライセンス計画を削除。今回の計画はGit履歴 `ef3195d`、旧計画はmainの履歴に保持。未実施フェーズの正本 `Webアプリ構築_作業計画.md` は必要なため保持する。旧追加計画の低優先候補は、段階データの恒久OPFS保存、プロジェクト複製、ビューアPNG保存（フェーズ0の実測後に再評価）。ZIP逐次化は実装済み。
 - PR #4をマージし、ローカルmainを同期。マージ済みの `codex/reconstruction-quality-refactor` をローカル・GitHubの両方から削除した。不要な計画MDの削除もmainへ反映済み。mainと公開用gh-pages、未実施フェーズの正本計画を保持し、Actions無効を維持する。
+
+### GitHub Pages公開(2026-09-30)
+
+- mainのローカル `npm run build`（型検査・ライセンス検査・PWA生成を含む）に成功し、検証済みの`app/dist`を既存の`gh-pages`へ配置した。`.nojekyll`を維持し、公開コミット`364bbde8cc7fea09190958db0b071e60aa057c8a`をプッシュ。
+- ユーザーの追加指示に従い、Pages公開時のみActionsを有効化。[pages build and deployment #36712833275](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/actions/runs/36712833275)は成功し、Pages APIも対象コミットの`built`を返した。開発用workflowは0件のまま。公開完了後にActionsを再び無効化した。
+- 公開URLの16配信ファイルすべてがHTTP 200を返し、SHA-256がローカルビルドと一致。公開ブラウザでアプリ起動、新しい`index-DppKCDwH.js`の読込、形状診断のマニュアル追加を確認。コンソール警告・エラーなし。
 
 ## 再開手順(使用制限などで中断した場合)
 
