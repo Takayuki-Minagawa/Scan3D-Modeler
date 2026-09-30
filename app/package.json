@@ -16,7 +16,8 @@
     "licenses:verify": "node scripts/generate-third-party-licenses.mjs --check",
     "pwa:inject": "node scripts/inject-precache.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.2",

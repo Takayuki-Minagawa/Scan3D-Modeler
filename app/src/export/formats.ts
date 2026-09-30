@@ -1,3 +1,5 @@
+import { validateMesh, validatePositions } from '../geometry/validation';
+
 /**
  * 形状データの入出力フォーマット(作業計画 1F-3 の一部を先行実装)。
  * - 点群: PLY(binary_little_endian)
@@ -7,7 +9,8 @@
 
 /** 点群 → PLY (binary little endian) */
 export function plyFromPoints(points: Float32Array): Blob {
-  const count = Math.floor(points.length / 3);
+  validatePositions(points);
+  const count = points.length / 3;
   const header =
     'ply\n' +
     'format binary_little_endian 1.0\n' +
@@ -24,7 +27,8 @@ export function plyFromPoints(points: Float32Array): Blob {
 
 /** 三角形メッシュ → STL (binary) */
 export function stlFromMesh(positions: Float32Array, indices: Uint32Array): Blob {
-  const triCount = Math.floor(indices.length / 3);
+  validateMesh(positions, indices);
+  const triCount = indices.length / 3;
   const buf = new ArrayBuffer(84 + triCount * 50);
   const dv = new DataView(buf);
   const headerText = 'scan2fem surface export';
@@ -68,6 +72,7 @@ export function stlFromMesh(positions: Float32Array, indices: Uint32Array): Blob
 
 /** アプリ内部保存用メッシュバイナリ: [uint32 vCount][uint32 iCount][f32 xyz...][u32 idx...] */
 export function encodeMeshBinary(positions: Float32Array, indices: Uint32Array): ArrayBuffer {
+  validateMesh(positions, indices);
   const buf = new ArrayBuffer(8 + positions.byteLength + indices.byteLength);
   const head = new Uint32Array(buf, 0, 2);
   head[0] = Math.floor(positions.length / 3);
@@ -81,10 +86,16 @@ export function decodeMeshBinary(buf: ArrayBuffer): {
   positions: Float32Array;
   indices: Uint32Array;
 } {
+  if (buf.byteLength < 8) throw new Error('メッシュデータのヘッダが不足しています');
   const head = new Uint32Array(buf, 0, 2);
   const vCount = head[0];
   const iCount = head[1];
+  if (vCount === 0 || iCount === 0 || iCount % 3 !== 0 ||
+      8 + vCount * 12 + iCount * 4 !== buf.byteLength) {
+    throw new Error('メッシュデータの頂点数・面数または長さが不正です');
+  }
   const positions = new Float32Array(buf, 8, vCount * 3);
   const indices = new Uint32Array(buf, 8 + vCount * 12, iCount);
+  validateMesh(positions, indices);
   return { positions, indices };
 }

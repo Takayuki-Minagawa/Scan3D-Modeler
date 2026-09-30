@@ -104,6 +104,10 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
                   'In Viewer, pick two geometry points (or enter coordinates) and their measured distance to calibrate display and PLY/STL export scale.',
                 )}
               </li>
+              <li>{tr(
+                '「形状診断」で保存履歴を選ぶと、寸法・面積・退化面・境界辺などを確認し、単位と由来を含むJSONを保存できます。元形状は変更しません。',
+                'In Diagnostics, choose a stored history entry to inspect dimensions, area, degenerate faces and edges, and save a JSON report with units and provenance. Original geometry stays unchanged.',
+              )}</li>
               <li>{tr('「出力」からプロジェクトZIPや利用可能な形式を保存します。', 'Save a project ZIP or an available format from Export.')}</li>
             </ol>
           </section>

@@ -11,6 +11,7 @@ import { StoragePanel } from '../storage/StoragePanel';
 import type { Project } from '../types';
 import { ExportPanel } from './ExportPanel';
 import { AppControls } from './AppControls';
+import { GeometryDiagnosticsPanel } from '../geometry/GeometryDiagnosticsPanel';
 
 const ViewerPanel = lazy(() =>
   import('../viewer/ViewerPanel').then((module) => ({ default: module.ViewerPanel })),
@@ -43,7 +44,7 @@ class ViewerLoadBoundary extends Component<
   }
 }
 
-type Tab = 'capture' | 'images' | 'pipeline' | 'viewer' | 'export';
+type Tab = 'capture' | 'images' | 'pipeline' | 'viewer' | 'diagnostics' | 'export';
 
 export function ProjectPage(props: { projectId: string; onBack: () => void }) {
   const { tr } = useI18n();
@@ -58,6 +59,7 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
     { id: 'images', label: tr('画像', 'Images') },
     { id: 'pipeline', label: tr('パイプライン', 'Pipeline') },
     { id: 'viewer', label: tr('ビューア', 'Viewer') },
+    { id: 'diagnostics', label: tr('形状診断', 'Diagnostics') },
     { id: 'export', label: tr('出力', 'Export') },
   ];
 
@@ -154,6 +156,7 @@ export function ProjectPage(props: { projectId: string; onBack: () => void }) {
         </ViewerLoadBoundary>
       )}
       {tab === 'export' && <ExportPanel project={project} refreshKey={refreshKey} />}
+      {tab === 'diagnostics' && <GeometryDiagnosticsPanel project={project} refreshKey={refreshKey} />}
     </main>
   );
 }

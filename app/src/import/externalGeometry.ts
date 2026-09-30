@@ -1,5 +1,6 @@
 import { db, now, uid } from '../db/db';
 import { encodeMeshBinary } from '../export/formats';
+import { validateMesh, validatePositions } from '../geometry/validation';
 import type { AssetMeta, Project, Stage, Unit } from '../types';
 
 // 暫定的な安全上限。実機測定後に端末別の値へ調整する。
@@ -17,32 +18,192 @@ export interface ParsedGeometry {
   coordinateUnit: Unit;
 }
 
-/** Loaderによる配列確保より前に、ファイルが宣言する要素数を制限する。 */
-function checkGeometryHeader(buffer: ArrayBuffer, extension: 'ply' | 'stl'): void {
+type PlyType = 'int8' | 'uint8' | 'int16' | 'uint16' | 'int32' | 'uint32' | 'float32' | 'float64';
+interface PlyProperty { name: string; type: PlyType; countType?: PlyType }
+interface PlyElement { name: string; count: number; properties: PlyProperty[] }
+
+const PLY_TYPES: Record<string, PlyType> = {
+  char: 'int8', uchar: 'uint8', short: 'int16', ushort: 'uint16', int: 'int32', uint: 'uint32',
+  float: 'float32', double: 'float64', int8: 'int8', uint8: 'uint8', int16: 'int16',
+  uint16: 'uint16', int32: 'int32', uint32: 'uint32', float32: 'float32', float64: 'float64',
+};
+const PLY_BYTES: Record<PlyType, number> = {
+  int8: 1, uint8: 1, int16: 2, uint16: 2, int32: 4, uint32: 4, float32: 4, float64: 8,
+};
+
+/**
+ * Read the supported PLY subset directly. Render loaders may silently stop at truncated input,
+ * drop polygons, or expand colored faces into unindexed vertices; none is safe for saved geometry.
+ * Ancillary properties are validated and skipped; original position/face topology is retained.
+ */
+function parsePly(buffer: ArrayBuffer, factor: number): { positions: Float32Array; indices?: Uint32Array } {
   const bytes = new Uint8Array(buffer);
-  if (extension === 'ply') {
-    const prefix = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 65_536)));
-    const end = prefix.search(/^end_header\s*$/m);
-    if (!/^ply(?:\r\n|\r|\n)/.test(prefix) || end < 0) {
-      throw new Error('PLYヘッダが不正か長すぎます');
-    }
-    let vertices = 0;
-    let faces = 0;
-    for (const line of prefix.slice(0, end).split(/\r\n|\r|\n/)) {
-      if (!/^element\s/.test(line.trim())) continue;
-      const match = /^element\s+(\S+)\s+(\d+)\s*$/.exec(line.trim());
-      if (!match) throw new Error('PLYの要素数が不正です');
-      const count = Number(match[2]);
-      if (!Number.isSafeInteger(count)) throw new Error('PLYの要素数が不正です');
-      if (match[1] === 'vertex') vertices += count;
-      if (match[1] === 'face') faces += count;
-      if (vertices > MAX_GEOMETRY_VERTICES || faces > MAX_GEOMETRY_TRIANGLES) {
-        throw new Error('PLYの頂点数または面数が上限を超えています');
+  // Single-byte decoding keeps offsets equal to byte positions, including comments.
+  // Follow the magic line's terminator: a CR-only header may be followed by a binary
+  // payload whose first byte is LF, which must not be consumed as a CRLF terminator.
+  const prefix = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 65_536)));
+  const magic = /^ply(\r\n|\r|\n)/.exec(prefix);
+  const end = magic && new RegExp(`^end_header${magic[1]}`, 'm').exec(prefix);
+  if (!end) {
+    throw new Error('PLYヘッダが不正か長すぎます');
+  }
+  const headerBytes = end.index + end[0].length;
+  const elements: PlyElement[] = [];
+  let format = '';
+  let totalCount = 0;
+  for (const line of prefix.slice(0, end.index).split(/\r\n|\r|\n/).slice(1)) {
+    const words = line.trim().split(/\s+/);
+    if (!words[0] || words[0] === 'comment' || words[0] === 'obj_info') continue;
+    if (words[0] === 'format') {
+      if (format || words.length !== 3 || words[2] !== '1.0' ||
+          !['ascii', 'binary_little_endian', 'binary_big_endian'].includes(words[1])) {
+        throw new Error('PLYの形式指定が不正です');
       }
+      format = words[1];
+    } else if (words[0] === 'element') {
+      const count = Number(words[2]);
+      if (words.length !== 3 || !/^\d+$/.test(words[2]) || !Number.isSafeInteger(count) ||
+          elements.some((element) => element.name === words[1])) {
+        throw new Error('PLYの要素数または要素名が不正です');
+      }
+      totalCount += count;
+      if (totalCount > MAX_GEOMETRY_VERTICES + MAX_GEOMETRY_TRIANGLES ||
+          (words[1] === 'vertex' && count > MAX_GEOMETRY_VERTICES) ||
+          (words[1] === 'face' && count > MAX_GEOMETRY_TRIANGLES)) {
+        throw new Error('PLYの要素数が上限を超えています');
+      }
+      elements.push({ name: words[1], count, properties: [] });
+    } else if (words[0] === 'property') {
+      const element = elements.at(-1);
+      const list = words[1] === 'list';
+      const typeName = words[list ? 3 : 1];
+      const type = Object.hasOwn(PLY_TYPES, typeName) ? PLY_TYPES[typeName] : undefined;
+      const countType = list && Object.hasOwn(PLY_TYPES, words[2]) ? PLY_TYPES[words[2]] : undefined;
+      const name = words[list ? 4 : 2];
+      if (!element || words.length !== (list ? 5 : 3) || !type || !name ||
+          (list && (!countType || countType.startsWith('float'))) ||
+          element.properties.some((property) => property.name === name)) {
+        throw new Error('PLYのプロパティ指定が不正です');
+      }
+      element.properties.push({ name, type, countType });
+    } else {
+      throw new Error('PLYヘッダに未対応の項目があります');
     }
-    return;
+  }
+  const vertices = elements.find((element) => element.name === 'vertex');
+  const faces = elements.find((element) => element.name === 'face');
+  if (!format || !vertices?.count || elements.some((element) => element.count > 0 && !element.properties.length)) {
+    throw new Error('PLYの頂点またはプロパティが不足しています');
+  }
+  const coordinateNames = [['x', 'px', 'posx'], ['y', 'py', 'posy'], ['z', 'pz', 'posz']].map(
+    (names) => names.find((name) => vertices.properties.some((property) => property.name === name && !property.countType)),
+  );
+  if (coordinateNames.some((name) => !name)) throw new Error('PLYのXYZ座標が不足しています');
+  const faceProperty = faces?.properties.find((property) =>
+    ['vertex_indices', 'vertex_index'].includes(property.name),
+  );
+  if (faces?.count && (!faceProperty?.countType || faceProperty.type.startsWith('float'))) {
+    throw new Error('PLYの面の頂点参照が不正です');
   }
 
+  const body = format === 'ascii' ? new TextDecoder().decode(bytes.subarray(headerBytes)) : '';
+  const token = /\S+/g;
+  const data = new DataView(buffer);
+  const little = format === 'binary_little_endian';
+  let offset = headerBytes;
+  function scalar(type: PlyType): number {
+    let value: number;
+    if (format === 'ascii') {
+      const next = token.exec(body)?.[0];
+      if (next === undefined) throw new Error('PLYの本体データが不足しています');
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(next)) {
+        throw new Error('PLYに不正な数値があります');
+      }
+      value = Number(next);
+    } else {
+      if (offset + PLY_BYTES[type] > bytes.length) throw new Error('PLYの本体データが不足しています');
+      switch (type) {
+        case 'int8': value = data.getInt8(offset); break;
+        case 'uint8': value = data.getUint8(offset); break;
+        case 'int16': value = data.getInt16(offset, little); break;
+        case 'uint16': value = data.getUint16(offset, little); break;
+        case 'int32': value = data.getInt32(offset, little); break;
+        case 'uint32': value = data.getUint32(offset, little); break;
+        case 'float32': value = data.getFloat32(offset, little); break;
+        case 'float64': value = data.getFloat64(offset, little); break;
+      }
+      offset += PLY_BYTES[type];
+    }
+    if (!Number.isFinite(value) || (type === 'float32' && !Number.isFinite(Math.fround(value)))) {
+      throw new Error('PLYに不正な数値があります');
+    }
+    if (!type.startsWith('float')) {
+      const bits = PLY_BYTES[type] * 8;
+      const signed = type.startsWith('int');
+      if (!Number.isInteger(value) || value < (signed ? -(2 ** (bits - 1)) : 0) ||
+          value > (signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1)) {
+        throw new Error('PLYの整数値が範囲外です');
+      }
+    }
+    return value;
+  }
+
+  const positions = new Float32Array(vertices.count * 3);
+  const indexBuffer = new Uint32Array(Math.min(MAX_GEOMETRY_TRIANGLES, (faces?.count ?? 0) * 2) * 3);
+  let indexCount = 0;
+  for (const element of elements) {
+    for (let row = 0; row < element.count; row++) {
+      for (const property of element.properties) {
+        if (property.countType) {
+          const count = scalar(property.countType);
+          if (count < 0 || count > MAX_GEOMETRY_VERTICES) throw new Error('PLYのリスト長が範囲外です');
+          const isFace = element === faces && property === faceProperty;
+          if (isFace && count !== 3 && count !== 4) {
+            throw new Error('PLYの面は三角形または四角形にしてください');
+          }
+          const face: number[] = [];
+          for (let i = 0; i < count; i++) {
+            const value = scalar(property.type);
+            if (isFace) {
+              if (!Number.isInteger(value) || value < 0 || value >= vertices.count) {
+                throw new Error('三角面の頂点参照が不正です');
+              }
+              face.push(value);
+            }
+          }
+          if (isFace) {
+            const triangles = count === 3 ? face : [face[0], face[1], face[3], face[1], face[2], face[3]];
+            if (indexCount + triangles.length > indexBuffer.length) throw new Error('PLYの三角面数が上限を超えています');
+            indexBuffer.set(triangles, indexCount);
+            indexCount += triangles.length;
+          }
+        } else {
+          const value = scalar(property.type);
+          const axis = element === vertices ? coordinateNames.indexOf(property.name) : -1;
+          if (axis >= 0) {
+            const scaled = value * factor;
+            if (!Number.isFinite(Math.fround(scaled))) throw new Error('頂点座標に無効な値があります');
+            positions[row * 3 + axis] = scaled;
+          }
+        }
+      }
+    }
+  }
+  if (format === 'ascii' ? token.exec(body) !== null : offset !== bytes.length) {
+    throw new Error('PLYの要素数と本体データの長さが一致しません');
+  }
+  if (indexCount) {
+    const indices = indexBuffer.slice(0, indexCount);
+    validateMesh(positions, indices);
+    return { positions, indices };
+  }
+  validatePositions(positions);
+  return { positions };
+}
+
+/** STLLoaderによる配列確保より前に宣言面数を制限する。 */
+function checkStlHeader(buffer: ArrayBuffer): void {
+  const bytes = new Uint8Array(buffer);
   // STLLoaderは先頭にsolidがなければbinary STLとして面数分の配列を確保する。
   if (bytes.length < 84) return;
   const asciiPrefix = [0, 1, 2, 3, 4].some((offset) =>
@@ -73,17 +234,19 @@ export async function parseExternalGeometry(
   }
 
   const buffer = await file.arrayBuffer();
-  checkGeometryHeader(buffer, extension);
-  const geometry = extension === 'ply'
-    ? new (await import('three/examples/jsm/loaders/PLYLoader.js')).PLYLoader().parse(buffer)
-    : new (await import('three/examples/jsm/loaders/STLLoader.js')).STLLoader().parse(buffer);
+  const factor = MILLIMETRES[inputUnit] / MILLIMETRES[coordinateUnit];
+  if (extension === 'ply') {
+    const parsed = parsePly(buffer, factor);
+    return { ...parsed, kind: parsed.indices ? 'mesh' : 'pointcloud', inputUnit, coordinateUnit };
+  }
+  checkStlHeader(buffer);
+  const geometry = new (await import('three/examples/jsm/loaders/STLLoader.js')).STLLoader().parse(buffer);
   try {
     const attribute = geometry.getAttribute('position');
     if (!attribute || attribute.itemSize !== 3 || attribute.count === 0 ||
         attribute.count > MAX_GEOMETRY_VERTICES) {
       throw new Error('頂点が空か、頂点数が上限を超えています');
     }
-    const factor = MILLIMETRES[inputUnit] / MILLIMETRES[coordinateUnit];
     const positions = new Float32Array(attribute.count * 3);
     for (let vertex = 0; vertex < attribute.count; vertex++) {
       for (let axis = 0; axis < 3; axis++) {
@@ -95,11 +258,6 @@ export async function parseExternalGeometry(
       }
     }
 
-    // PLYでfaceがない場合だけ点群として扱う。STLは三角面が必須。
-    const isMesh = extension === 'stl' || geometry.index !== null;
-    if (!isMesh) {
-      return { kind: 'pointcloud', positions, inputUnit, coordinateUnit };
-    }
     const indexCount = geometry.index?.count ?? attribute.count;
     if (indexCount === 0 || indexCount % 3 !== 0 ||
         indexCount / 3 > MAX_GEOMETRY_TRIANGLES) {
@@ -113,6 +271,7 @@ export async function parseExternalGeometry(
       }
       indices[i] = index;
     }
+    validateMesh(positions, indices);
     return { kind: 'mesh', positions, indices, inputUnit, coordinateUnit };
   } finally {
     geometry.dispose();
@@ -159,6 +318,11 @@ export async function saveExternalGeometry(
   fileName: string,
   parsed: ParsedGeometry,
 ): Promise<Stage> {
+  if (parsed.kind === 'pointcloud') validatePositions(parsed.positions);
+  else {
+    if (!parsed.indices) throw new Error('三角面の頂点参照がありません');
+    validateMesh(parsed.positions, parsed.indices);
+  }
   const kind = parsed.kind === 'pointcloud' ? 'dense' : 'surface';
   const blob = parsed.kind === 'pointcloud'
     ? new Blob([parsed.positions.buffer as ArrayBuffer], { type: 'application/octet-stream' })

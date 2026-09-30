@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import { getAssetBlob, listAssets } from '../db/assets';
-import { getStage } from '../db/stages';
-import { decodeMeshBinary, plyFromPoints, stlFromMesh } from '../export/formats';
+import { plyFromPoints, stlFromMesh } from '../export/formats';
 import { exportProjectZip, saveProjectZipDirectly } from '../export/zip';
 import { localizeError } from '../errorText';
+import { listGeometryAssets, loadGeometry, type GeometryAsset } from '../geometry/repository';
 import { useI18n } from '../i18n';
-import type { AssetMeta, Project, Stage } from '../types';
+import type { Project } from '../types';
 import {
   calibrationMatchesSource,
   scaleSourceForAsset,
@@ -15,10 +14,7 @@ import { Section } from './common';
 import { downloadBlob, fmtBytes } from './misc';
 
 /** データ出力(1F-3の一部+1A-3)。 */
-interface ExportAsset {
-  asset: AssetMeta;
-  stage?: Stage;
-}
+type ExportAsset = GeometryAsset;
 
 export function ExportPanel(props: { project: Project; refreshKey: number }) {
   const { tr } = useI18n();
@@ -27,18 +23,20 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
   const [busy, setBusy] = useState<{ ja: string; en: string } | null>(null);
 
   useEffect(() => {
+    let alive = true;
+    setCloud(null);
+    setMesh(null);
     void (async () => {
-      const [cloudAsset, meshAsset] = await Promise.all([
-        listAssets(props.project.id, ['pointcloud']).then((assets) => assets.at(-1)),
-        listAssets(props.project.id, ['mesh']).then((assets) => assets.at(-1)),
-      ]);
-      const [cloudStage, meshStage] = await Promise.all([
-        cloudAsset?.stageId ? getStage(cloudAsset.stageId) : undefined,
-        meshAsset?.stageId ? getStage(meshAsset.stageId) : undefined,
-      ]);
-      setCloud(cloudAsset ? { asset: cloudAsset, stage: cloudStage } : null);
-      setMesh(meshAsset ? { asset: meshAsset, stage: meshStage } : null);
+      try {
+        const entries = await listGeometryAssets(props.project.id);
+        if (!alive) return;
+        setCloud(entries.filter((entry) => entry.asset.kind === 'pointcloud').at(-1) ?? null);
+        setMesh(entries.filter((entry) => entry.asset.kind === 'mesh').at(-1) ?? null);
+      } catch (cause) {
+        if (alive) setBusy(localizeError(cause));
+      }
     })();
+    return () => { alive = false; };
   }, [props.project.id, props.refreshKey]);
 
   const calibration = props.project.scaleCalibration;
@@ -95,10 +93,8 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
   async function exportPly() {
     if (!cloud || !cloudScaleApplies) return;
     try {
-      const blob = await getAssetBlob(cloud.asset.id);
-      if (!blob) throw new Error('点群の本体データがありません');
-      const points = new Float32Array(await blob.arrayBuffer());
-      const scaled = scaledPositions(points, calibration?.factor ?? 1);
+      const geometry = await loadGeometry(cloud);
+      const scaled = scaledPositions(geometry.positions, calibration?.factor ?? 1);
       downloadBlob(plyFromPoints(scaled), `${props.project.name}_points.ply`);
       setBusy({ ja: 'PLY出力が完了しました', en: 'PLY export complete' });
     } catch (cause) {
@@ -110,11 +106,9 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
   async function exportStl() {
     if (!mesh || !meshScaleApplies) return;
     try {
-      const blob = await getAssetBlob(mesh.asset.id);
-      if (!blob) throw new Error('サーフェスの本体データがありません');
-      const m = decodeMeshBinary(await blob.arrayBuffer());
+      const m = await loadGeometry(mesh);
       const scaled = scaledPositions(m.positions, calibration?.factor ?? 1);
-      downloadBlob(stlFromMesh(scaled, m.indices), `${props.project.name}_surface.stl`);
+      downloadBlob(stlFromMesh(scaled, m.indices!), `${props.project.name}_surface.stl`);
       setBusy({ ja: 'STL出力が完了しました', en: 'STL export complete' });
     } catch (cause) {
       const reason = localizeError(cause);

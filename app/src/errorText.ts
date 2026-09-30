@@ -72,8 +72,40 @@ export function formatAppError(error: unknown, language: Language): string {
       'The PLY vertex or face count exceeds the import limit.',
     'STLの面数またはファイル長が不正です':
       'The STL face count or file length is invalid.',
+    '頂点座標は空でないXYZの組で指定してください': 'Vertex coordinates must contain nonempty XYZ triples.',
+    '頂点座標に無効な値があります': 'Vertex coordinates contain invalid or nonfinite values.',
+    '三角面は空でない3頂点の組で指定してください': 'Mesh indices must contain nonempty triangle triples.',
+    '三角面の頂点参照が不正です': 'A triangle references an invalid vertex.',
+    '三角面の頂点参照がありません': 'Triangle indices are missing.',
+    '点群データの長さが不正です': 'The point-cloud data length is invalid.',
+    'メッシュデータのヘッダが不足しています': 'The mesh data header is incomplete.',
+    'メッシュデータの頂点数・面数または長さが不正です': 'The mesh vertex count, triangle count or data length is invalid.',
+    'PLYの形式指定が不正です': 'The PLY format declaration is invalid.',
+    'PLYの要素数または要素名が不正です': 'The PLY element name or count is invalid.',
+    'PLYの要素数が上限を超えています': 'The PLY element count exceeds the import limit.',
+    'PLYのプロパティ指定が不正です': 'The PLY property declaration is invalid.',
+    'PLYヘッダに未対応の項目があります': 'The PLY header contains an unsupported declaration.',
+    'PLYの頂点またはプロパティが不足しています': 'PLY vertices or properties are missing.',
+    'PLYのXYZ座標が不足しています': 'PLY XYZ coordinate properties are missing.',
+    'PLYの面の頂点参照が不正です': 'The PLY face vertex-index property is invalid.',
+    'PLYの本体データが不足しています': 'The PLY payload is incomplete.',
+    'PLYに不正な数値があります': 'The PLY contains an invalid numeric value.',
+    'PLYの整数値が範囲外です': 'A PLY integer is outside its declared range.',
+    'PLYのリスト長が範囲外です': 'A PLY list count is outside the supported range.',
+    'PLYの面は三角形または四角形にしてください': 'PLY faces must be triangles or quadrilaterals.',
+    'PLYの三角面数が上限を超えています': 'The triangulated PLY face count exceeds the import limit.',
+    'PLYの要素数と本体データの長さが一致しません': 'The PLY payload does not match its declared element counts.',
+    '形状診断が時間切れになりました': 'Geometry inspection timed out. Try a smaller geometry.',
+    '形状診断の結果が不正です': 'The geometry inspection result is invalid.',
+    '形状診断ワーカーが停止しました': 'The geometry inspection worker stopped.',
   };
   if (exact[message]) return exact[message];
+
+  if (message.startsWith('ZIP内の形状データが不正です:')) {
+    return 'The ZIP contains invalid geometry data or could not be validated. Nothing was imported.';
+  }
+  const missingGeometry = message.match(/^形状「(.+)」の本体データがありません$/);
+  if (missingGeometry) return `Geometry “${missingGeometry[1]}” is missing its stored data.`;
 
   const assetMissing = message.match(/^アセット「(.+)」の本体データが見つかりません/);
   if (assetMissing) {

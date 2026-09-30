@@ -37,8 +37,8 @@ export function ExternalGeometryPanel(props: { project: Project; onChanged: () =
     <Section title={tr('外部3D形状の取込', 'Import external 3D geometry')}>
       <p className="hint">
         {tr(
-          `PLY点群・PLY三角面・ASCII/binary STLに対応します。入力単位を選び、プロジェクト単位(${props.project.unit})へ換算して新しい履歴として保存します。元のファイルが検証済みFEMモデルであることは保証しません。暫定上限: ${MAX_GEOMETRY_FILE_BYTES / 1024 / 1024}MiB。`,
-          `Supports PLY points, PLY triangles, and ASCII/binary STL. Select the input unit; coordinates are converted to the project unit (${props.project.unit}) and saved as a new history entry. The source is not verified as a FEM model. Provisional file limit: ${MAX_GEOMETRY_FILE_BYTES / 1024 / 1024}MiB.`,
+          `PLY点群・PLY三角面/四角面・ASCII/binary STLに対応します。四角面は三角形に分割し、色・UVなどの属性は保存しません。入力単位を選び、プロジェクト単位(${props.project.unit})へ換算して新しい履歴として保存します。元のファイルが検証済みFEMモデルであることは保証しません。暫定上限: ${MAX_GEOMETRY_FILE_BYTES / 1024 / 1024}MiB。`,
+          `Supports PLY points/triangles/quads and ASCII/binary STL. Quads are triangulated; color, UV and other attributes are not retained. Select the input unit; coordinates are converted to the project unit (${props.project.unit}) and saved as a new history entry. The source is not verified as a FEM model. Provisional file limit: ${MAX_GEOMETRY_FILE_BYTES / 1024 / 1024}MiB.`,
         )}
       </p>
       <div className="row wrap">
