@@ -108,7 +108,7 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
                 '「形状診断」で保存履歴を選ぶと、寸法・面積・退化面・境界辺などを確認し、単位と由来を含むJSONを保存できます。元形状は変更しません。',
                 'In Diagnostics, choose a stored history entry to inspect dimensions, area, degenerate faces and edges, and save a JSON report with units and provenance. Original geometry stays unchanged.',
               )}</li>
-              <li>{tr('「出力」からプロジェクトZIPや利用可能な形式を保存します。', 'Save a project ZIP or an available format from Export.')}</li>
+              <li>{tr('「出力」からプロジェクトZIPを保存します。形状は保存履歴を選び、点群ならPLY、サーフェスならPLYまたはSTLで保存できます。読込先でもプロジェクトと同じ単位を指定してください。', 'Save a project ZIP from Export. Choose geometry from history: PLY for points, or PLY/STL for surfaces. Select the same project unit in the receiving application.')}</li>
             </ol>
           </section>
 
@@ -140,8 +140,8 @@ export function ManualDialog({ open, onClose }: ManualDialogProps) {
             <h3>{tr('データとカメラ', 'Data and camera')}</h3>
             <p>
               {tr(
-                'このアプリには画像・動画を受け取るバックエンドはなく、通常はブラウザのIndexedDBに保存されます。端末ストレージ欄で使用量と永続保存状態を確認できます。画像一覧は保存済みサムネイルを使い、原画は詳細を開いた時だけ読みます。カメラはHTTPSまたはlocalhostが必要です。必要なプロジェクトはZIPでもバックアップしてください。ZIPには実行中・一時停止中ジョブの再開状態は含まれません。',
-                'This app has no backend for receiving images or videos; data is normally stored in browser IndexedDB. Device storage shows usage and persistence state. The gallery uses saved thumbnails and loads originals only for details. Camera access requires HTTPS or localhost. Also back up important projects as ZIP files; ZIP files do not include resume state for in-progress or paused jobs.',
+                'このアプリには画像・動画を受け取るバックエンドはなく、通常はブラウザのIndexedDBに保存されます。端末ストレージ欄で使用量と永続保存状態を確認できます。画像一覧は保存済みサムネイルを使い、原画は詳細を開いた時だけ読みます。カメラはHTTPSまたはlocalhostが必要です。必要なプロジェクトはZIPでもバックアップしてください。ZIPには実行中・一時停止中ジョブの再開状態は含まれません。ZIPの復元上限は1ファイル256MiB、展開データとZIP本体は各1GiB、9,999アセット、管理情報8MiBです。上限を超える出力は拒否されます。バックアップを復元できることを確認してから元データを削除してください。',
+                'This app has no backend for receiving images or videos; data is normally stored in browser IndexedDB. Device storage shows usage and persistence state. The gallery uses saved thumbnails and loads originals only for details. Camera access requires HTTPS or localhost. Back up important projects as ZIP files; job resume state is not included. Restore limits are 256 MiB per file, 1 GiB each for expanded data and the ZIP, 9,999 assets, and 8 MiB of metadata. Export is rejected above these limits. Verify that the backup can be restored before deleting the original data.',
               )}
             </p>
           </section>

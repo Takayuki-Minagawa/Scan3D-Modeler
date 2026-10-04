@@ -2,6 +2,18 @@ import { strToU8, Zip, ZipPassThrough, Unzip, UnzipInflate } from 'fflate';
 import { db, uid, now } from '../db/db';
 import type { AssetMeta, Project, Stage } from '../types';
 import { validateGeometryBlob } from '../geometry/workerClient';
+import {
+  allowedEntryName,
+  MAX_CENTRAL_DIRECTORY_BYTES,
+  MAX_ENTRIES,
+  MAX_ENTRY_BYTES,
+  MAX_EXPANDED_BYTES,
+  MAX_IN_MEMORY_EXPORT_BYTES,
+  MAX_IN_MEMORY_IMPORT_BYTES,
+  MAX_MANIFEST_BYTES,
+  MAX_ZIP_BYTES,
+  validateZipExportLayout,
+} from './zipLimits';
 
 /**
  * プロジェクトZIP入出力(作業計画 1A-3)。
@@ -451,6 +463,8 @@ export interface ExportZipResult {
 
 interface ProjectSnapshot {
   manifest: Manifest;
+  manifestBytes: Uint8Array;
+  zipBytes: number;
   blobs: Map<string, Blob>;
   excludedRunningStages: number;
 }
@@ -484,18 +498,24 @@ async function snapshotProject(projectId: string): Promise<ProjectSnapshot> {
         `アセット「${a.name}」の本体データが見つかりません(データ破損の可能性)。エクスポートを中止しました`,
       );
     }
+    if (rec.blob.size !== a.size) {
+      throw new Error('復元できるZIPを作成できません: アセット本体と保存サイズが一致しません。元のプロジェクトは削除しないでください');
+    }
     blobs.set(a.id, rec.blob);
   }
   await tx.done;
 
-  return { manifest: {
+  const manifest: Manifest = {
     format: 'scan2fem-project',
     version: 2,
     exportedAt: now(),
     project,
     stages,
     assets,
-  }, blobs,
+  };
+  const manifestBytes = strToU8(JSON.stringify(manifest));
+  const { zipBytes } = validateZipExportLayout(manifestBytes.byteLength, assets);
+  return { manifest, manifestBytes, zipBytes, blobs,
     excludedRunningStages: allStages.length - stages.length,
   };
 }
@@ -517,7 +537,7 @@ async function streamSnapshot(
   try {
     const manifestFile = new ZipPassThrough('project.json');
     zip.add(manifestFile);
-    manifestFile.push(strToU8(JSON.stringify(snapshot.manifest)), true);
+    manifestFile.push(snapshot.manifestBytes, true);
     await pending;
     for (const asset of snapshot.manifest.assets) {
       const blob = snapshot.blobs.get(asset.id)!;
@@ -550,8 +570,7 @@ async function streamSnapshot(
 /** File System Access APIが使えないブラウザ向け。元BlobのarrayBuffer全読込は行わない。 */
 export async function exportProjectZip(projectId: string): Promise<ExportZipResult> {
   const snapshot = await snapshotProject(projectId);
-  const totalBytes = [...snapshot.blobs.values()].reduce((sum, blob) => sum + blob.size, 0);
-  if (totalBytes > 128 * 1024 * 1024) {
+  if (snapshot.zipBytes > MAX_IN_MEMORY_EXPORT_BYTES) {
     throw new Error('128MiBを超えるZIPは直接保存に対応したブラウザで出力してください');
   }
   const chunks: Uint8Array[] = [];
@@ -572,9 +591,11 @@ export async function saveProjectZipDirectly(
   if (!picker) throw new Error('このブラウザは直接保存に対応していません');
   // ユーザー操作の有効期間内にダイアログを開くため、最初のawaitで呼ぶ。
   const handle = await picker.call(window, { suggestedName, types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }] });
+  // Validate the complete archive before opening a writable stream. An oversized backup
+  // must not be reported as successful when this application's importer cannot restore it.
+  const snapshot = await snapshotProject(projectId);
   const writable = await handle.createWritable();
   try {
-    const snapshot = await snapshotProject(projectId);
     await streamSnapshot(snapshot, async (chunk) => { await writable.write(new Uint8Array(chunk)); });
     await writable.close();
     return { excludedRunningStages: snapshot.excludedRunningStages };
@@ -583,13 +604,6 @@ export async function saveProjectZipDirectly(
     throw error;
   }
 }
-
-const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
-const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
-const MAX_IN_MEMORY_IMPORT_BYTES = 64 * 1024 * 1024;
-const MAX_ENTRIES = 10_000;
-const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 
 interface CentralEntry { size: number; crc: number; compression: number }
 
@@ -603,10 +617,6 @@ for (let i = 0; i < 256; i++) {
 function updateCrc(crc: number, chunk: Uint8Array): number {
   for (const byte of chunk) crc = CRC_TABLE[(crc ^ byte) & 255] ^ (crc >>> 8);
   return crc >>> 0;
-}
-
-function allowedEntryName(name: string): boolean {
-  return name === 'project.json' || /^assets\/[A-Za-z0-9_-]{1,128}$/.test(name);
 }
 
 /** EOCDと中央ディレクトリを先に確認し、欠落・余分な項目・CRC不一致を検出する。 */
@@ -627,7 +637,7 @@ async function readCentralDirectory(file: Blob): Promise<Map<string, CentralEntr
   const centralSize = tail.getUint32(eocd + 12, true);
   const centralOffset = tail.getUint32(eocd + 16, true);
   if (count === 0 || count > MAX_ENTRIES || count !== tail.getUint16(eocd + 8, true) ||
-      centralSize > 16 * 1024 * 1024 || centralOffset + centralSize > tailStart + eocd) {
+      centralSize > MAX_CENTRAL_DIRECTORY_BYTES || centralOffset + centralSize > tailStart + eocd) {
     throw new Error('ZIPの中央ディレクトリが不正です');
   }
   const view = new DataView(await file.slice(centralOffset, centralOffset + centralSize).arrayBuffer());

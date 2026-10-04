@@ -2,6 +2,7 @@ import { db, now, uid } from '../db/db';
 import { encodeMeshBinary } from '../export/formats';
 import { validateMesh, validatePositions } from '../geometry/validation';
 import type { AssetMeta, Project, Stage, Unit } from '../types';
+import { parseStl } from './stl';
 
 // 暫定的な安全上限。実機測定後に端末別の値へ調整する。
 export const MAX_GEOMETRY_FILE_BYTES = 32 * 1024 * 1024;
@@ -201,24 +202,6 @@ function parsePly(buffer: ArrayBuffer, factor: number): { positions: Float32Arra
   return { positions };
 }
 
-/** STLLoaderによる配列確保より前に宣言面数を制限する。 */
-function checkStlHeader(buffer: ArrayBuffer): void {
-  const bytes = new Uint8Array(buffer);
-  // STLLoaderは先頭にsolidがなければbinary STLとして面数分の配列を確保する。
-  if (bytes.length < 84) return;
-  const asciiPrefix = [0, 1, 2, 3, 4].some((offset) =>
-    bytes[offset] === 115 && bytes[offset + 1] === 111 && bytes[offset + 2] === 108 &&
-    bytes[offset + 3] === 105 && bytes[offset + 4] === 100,
-  );
-  const faces = new DataView(buffer).getUint32(80, true);
-  if (!asciiPrefix || 84 + faces * 50 === bytes.length) {
-    if (faces > MAX_GEOMETRY_TRIANGLES || faces * 3 > MAX_GEOMETRY_VERTICES ||
-        84 + faces * 50 > bytes.length) {
-      throw new Error('STLの面数またはファイル長が不正です');
-    }
-  }
-}
-
 /** 外部形状の検査を完了してから保存する。STL/PLYは単位を規定しないため利用者に選択してもらう。 */
 export async function parseExternalGeometry(
   file: File,
@@ -239,43 +222,12 @@ export async function parseExternalGeometry(
     const parsed = parsePly(buffer, factor);
     return { ...parsed, kind: parsed.indices ? 'mesh' : 'pointcloud', inputUnit, coordinateUnit };
   }
-  checkStlHeader(buffer);
-  const geometry = new (await import('three/examples/jsm/loaders/STLLoader.js')).STLLoader().parse(buffer);
-  try {
-    const attribute = geometry.getAttribute('position');
-    if (!attribute || attribute.itemSize !== 3 || attribute.count === 0 ||
-        attribute.count > MAX_GEOMETRY_VERTICES) {
-      throw new Error('頂点が空か、頂点数が上限を超えています');
-    }
-    const positions = new Float32Array(attribute.count * 3);
-    for (let vertex = 0; vertex < attribute.count; vertex++) {
-      for (let axis = 0; axis < 3; axis++) {
-        const value = attribute.getComponent(vertex, axis) * factor;
-        if (!Number.isFinite(value) || !Number.isFinite(Math.fround(value))) {
-          throw new Error('頂点座標に無効な値があります');
-        }
-        positions[vertex * 3 + axis] = value;
-      }
-    }
-
-    const indexCount = geometry.index?.count ?? attribute.count;
-    if (indexCount === 0 || indexCount % 3 !== 0 ||
-        indexCount / 3 > MAX_GEOMETRY_TRIANGLES) {
-      throw new Error('三角面が空か、面数が上限を超えています');
-    }
-    const indices = new Uint32Array(indexCount);
-    for (let i = 0; i < indexCount; i++) {
-      const index = geometry.index?.getX(i) ?? i;
-      if (!Number.isSafeInteger(index) || index < 0 || index >= attribute.count) {
-        throw new Error('三角面の頂点参照が不正です');
-      }
-      indices[i] = index;
-    }
-    validateMesh(positions, indices);
-    return { kind: 'mesh', positions, indices, inputUnit, coordinateUnit };
-  } finally {
-    geometry.dispose();
-  }
+  const parsed = parseStl(buffer, factor, {
+    maxVertices: MAX_GEOMETRY_VERTICES,
+    maxTriangles: MAX_GEOMETRY_TRIANGLES,
+  });
+  validateMesh(parsed.positions, parsed.indices);
+  return { ...parsed, kind: 'mesh', inputUnit, coordinateUnit };
 }
 
 /** 大きな形状のパースと検査をUIスレッドから切り離す。 */
