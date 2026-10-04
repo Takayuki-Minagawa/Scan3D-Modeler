@@ -11,10 +11,14 @@ const entry = {
   formats: path.join(appDir, 'src/export/formats.ts'),
   scale: path.join(appDir, 'src/viewer/scale.ts'),
   externalGeometry: path.join(appDir, 'src/import/externalGeometry.ts'),
+  stl: path.join(appDir, 'src/import/stl.ts'),
   diagnostics: path.join(appDir, 'src/geometry/diagnostics.ts'),
   validation: path.join(appDir, 'src/geometry/validation.ts'),
   report: path.join(appDir, 'src/geometry/report.ts'),
   workerClient: path.join(appDir, 'src/geometry/workerClient.ts'),
+  geometryExportClient: path.join(appDir, 'src/export/geometryWorkerClient.ts'),
+  geometryExportWorker: path.join(appDir, 'src/export/geometry.worker.ts'),
+  zipLimits: path.join(appDir, 'src/export/zipLimits.ts'),
 };
 
 // Bundle TypeScript with the application's existing compiler. Node 20.19+ can

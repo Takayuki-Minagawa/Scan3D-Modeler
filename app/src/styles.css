@@ -946,8 +946,9 @@ label.check {
 }
 /* Geometry diagnostics keep long imported names and measurements readable on phones. */
 .diagnostics-controls { align-items: end; }
-.diagnostics-controls label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
-.diagnostics-controls select { min-width: 0; width: 100%; max-width: 38rem; box-sizing: border-box; }
+.diagnostics-controls label, .geometry-export label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+.diagnostics-controls select, .geometry-export select { min-width: 0; width: 100%; max-width: 38rem; box-sizing: border-box; }
+.export-grid > div { min-width: 0; overflow-wrap: anywhere; }
 .diagnostics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
 .diagnostics-grid dt { font-size: 0.85rem; opacity: 0.8; }
 .diagnostics-grid dd { margin: 4px 0 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }

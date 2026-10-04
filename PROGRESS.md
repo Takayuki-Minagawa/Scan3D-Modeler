@@ -3,7 +3,7 @@
 **このファイルは開発の中断・再開のための引き継ぎ台帳です。**
 作業を再開するときは、①このファイル ②[Webアプリ構築_作業計画.md](Webアプリ構築_作業計画.md) ③`git log` の3つを読めば状況を把握できます。作業を進めたら必ずこのファイルを更新してください。
 
-最終更新: 2026-09-30(PR #4マージ・作業ブランチ整理・GitHub Pages公開)
+最終更新: 2026-10-04(履歴出力・STL検証・ZIP復元上限の改善)
 
 ---
 
@@ -261,3 +261,15 @@ Web、GitHubの一次資料と現在のコードを照合し、画像セット�
 2. `cd app && npm install && npm run dev` で起動確認
 3. 上記「次にやること」から着手。コミットは計画項目単位で細かく
 4. アプリ内の実行中ジョブはIndexedDBのcheckpointから「続きから再開」できる(ユーザーデータは失われない)
+
+
+## 履歴出力と入力・バックアップの整合性改善(2026-10-04)
+
+- 作業ブランチ `codex/project-recovery-and-export` を先に作成し、コード、公開GitHubの状態、Three.js公式PLYExporter/GitHub実装とLoC STL形式資料を調査。大規模改修は不要と判断し、局所リファクタリングと入出力改善に限定した。
+- 出力画面で保存履歴を選択でき、点群PLYに加えサーフェスPLY/STLを保存可能。サーフェスPLYは共有頂点と面索引・向きを保持する。校正由来不一致の出力を防ぎ、変換をWorker化して中止・30秒制限・画面離脱時の解放を追加。出力中の重複操作も抑止。
+- STLの描画用パーサ依存を解消。binaryの完全長一致とASCII全体構造を検証し、壊れた末尾facetや余剰データを部分取込しない。BOM・改行形式・複数solid・solidヘッダ付きbinaryを検証。
+- ZIPの保存・復元制限を共通化。1件256MiB、ZIP/展開データ1GiB、管理情報8MiB、9,999アセットを保存前検査。実fflateヘッダ・data descriptorを含む総サイズとBlobサイズ整合も確認。直接保存のファイル選択はユーザー操作直後に維持し、検証後に書込みを開始する。
+- 初回統合検証: 全48テスト、型検査、ライセンス検査を含む本番ビルドが成功。依存追加なし、npm監査0件。初期chunk約318KB。GitHub Actionsは使用せずローカル検証。
+- ブラウザで既存テスト形状の履歴切替、別系列校正の出力抑止、一致する校正×2の表示、実WorkerでPLY(300B)/STL(284B)生成を確認。コンソール警告・エラー0件。内蔵ブラウザのdownloadイベントは保存先を返さず、ディスク上の保存確認は別途必要。
+- 既存の未実施フェーズ計画は保持する。実再構成/WASM、四面体メッシュ、実カメラ等は今回の変更対象外。監査で見つかった動画抽出の保存直後クラッシュ時の重複防止は継続課題。
+- 調査資料: https://threejs.org/docs/pages/PLYExporter.html 、https://github.com/mrdoob/three.js/blob/master/examples/jsm/exporters/PLYExporter.js 、https://www.loc.gov/preservation/digital/formats/fdd/fdd000505.shtml 、https://www.loc.gov/preservation/digital/formats/fdd/fdd000506.shtml

@@ -19,7 +19,7 @@
 | カメラ撮影UI（静止画・録画） | 実装済み。ただし実機カメラでの動作確認は未完了 |
 | 外部3D形状の取込・ビューア | PLY点群・三角形／四角形面、ASCII/binary STLを入力単位指定で取り込み、別履歴として表示。合成デモも表示。タッチ操作と2点間スケール校正に対応 |
 | 形状診断 | 保存履歴から対象を選び、寸法・三角形面積合計・退化面・境界辺・非多様体辺・向き不整合・重複面を非破壊で検査。条件と由来を含むJSONを保存可能 |
-| 出力 | プロジェクトZIP、デモまたは外部取込形状由来のPLY/STLを出力。PLY/STLへ保存済みスケールを適用。ZIPは逐次生成・制限付き読込に対応 |
+| 出力 | プロジェクトZIP、保存履歴を選んで点群PLY／サーフェスPLY・STLを出力。由来が一致する保存済みスケールを適用。ZIPは保存前に復元上限を検査 |
 | オフライン利用 | PWAとしてインストール可能。初回準備後はアプリ本体をオフラインで起動可能 |
 | 表示言語・外観 | 日本語を標準とし、英語／ライト・ダークテーマへ切替可能 |
 | 簡易マニュアル | アプリ内で日本語・英語の手順を表示 |
@@ -62,15 +62,17 @@ npm run typecheck
 3. 「パイプライン」で画像セット診断を確認します。必要なら「画像」で候補画像を確認し、焦点距離の候補と根拠を記録します。**デモ生成**で後段の流れを確認するか、「取込」でPLY/STLの入力単位を選択して実形状を追加できます。
 4. 「ビューア」で点群・サーフェスを確認します。形状上の2点（またはX/Y/Z座標）と実測距離を指定すると、現在の再構成系列のスケールを設定できます。ここで表示されるデモ結果は実データの再構成結果ではありません。
 5. 「形状診断」で保存履歴から点群またはサーフェスを選び、「形状を診断」を実行します。結果と検査条件を確認し、必要なら「診断JSONを保存」で記録します。
-6. 「出力」からプロジェクトZIPまたは対応するデータ形式を保存します。校正済みPLY/STLには倍率を適用しますが、IndexedDBとZIP内の元段階データは上書きしません。128MiBを超えるZIPは対応ブラウザの直接保存を利用します。
+6. 「出力」からプロジェクトZIPを保存します。形状は保存履歴を選び、点群をPLY、サーフェスをPLYまたはSTLで保存できます。校正済みPLY/STLには倍率を適用しますが、IndexedDBとZIP内の元段階データは上書きしません。128MiBを超えるZIPは対応ブラウザの直接保存を利用します。形状出力はWorkerで処理し、中止できます。読込先では同じプロジェクト単位を指定してください。
 
-再構成をやり直して座標系列が変わると、以前の校正は自動適用されません。ビューアで2点を選び直してください。ストレージ使用率が高い場合は、プロジェクトZIPを退避してから不要なプロジェクトを削除できます。
+再構成をやり直して座標系列が変わると、以前の校正は自動適用されません。ビューアで2点を選び直してください。ストレージ使用率が高い場合は、プロジェクトZIPを退避し、復元できることを確認してから不要なプロジェクトを削除できます。
+
+ZIPの保存・復元上限は、1ファイル256MiB、展開データとZIP本体は各1GiB、最大9,999アセット（管理情報を含め10,000項目）、管理情報8MiBです。出力前にヘッダ等を含むZIPサイズと本体データのサイズ整合性を検査し、上限超過・不整合を拒否します。上限を超えるプロジェクトは元データを保持してください。直接保存でもこの復元上限は変わりません。
 
 アプリ内の「簡易マニュアル」では、同じ基本手順と制約を日本語・英語で確認できます。表示言語とライト／ダークテーマは画面上の切替ボタンから変更できます。
 
 ## 形状の入力と診断の範囲
 
-PLY 1.0はASCII、binary little-endian、binary big-endianに対応します。点群または三角形／四角形面を受け付け、四角形は2枚の三角形に分割します。5頂点以上の多角形、欠けたデータ、宣言と一致しないデータ長、不正な座標や面索引は拒否します。XYZ座標と面索引を保存し、色・UV・法線などの付加属性は検査して読み飛ばします。外部形状の取込上限は32MiB、保存する頂点と三角形はそれぞれ100万個です。STLは三角形ごとに頂点を持つため、頂点数の上限も適用されます。
+PLY 1.0はASCII、binary little-endian、binary big-endianに対応します。点群または三角形／四角形面を受け付け、四角形は2枚の三角形に分割します。5頂点以上の多角形、欠けたデータ、宣言と一致しないデータ長、不正な座標や面索引は拒否します。XYZ座標と面索引を保存し、色・UV・法線などの付加属性は検査して読み飛ばします。外部形状の取込上限は32MiB、保存する頂点と三角形はそれぞれ100万個です。STLは三角形ごとに頂点を持つため、頂点数の上限も適用されます。binary STLは宣言面数とファイル長の完全一致、ASCII STLは全体の構文と各面の3頂点を検査し、欠損面や余剰データを部分取込せず拒否します。サーフェスPLY出力は保存頂点と三角面索引を保持します。
 
 診断は選択した履歴だけを対象にし、元の形状を変更しません。その形状と由来が一致するスケール校正だけを適用し、PLY/STL出力と同じFloat32座標で計算します。寸法はプロジェクト単位、面積はその2乗の単位です。別系列の校正や未校正の状態を表示し、JSONには対象のasset／stage、デモ・外部取込などの由来、単位、適用倍率、作成日時、検査条件、未検査項目を含めます。
 
@@ -83,7 +85,7 @@ PLY 1.0はASCII、binary little-endian、binary big-endianに対応します。�
 - アプリはサーバを必要としない静的構成です。長時間ジョブはブラウザ内のWeb WorkerとIndexedDBを利用します。
 - 実再構成用のWASMコンポーネントはまだ同梱していません。配布版はCOOP/COEP相当の応答を行うService Workerを備え、`crossOriginIsolated` の状態を画面に表示します。
 - PWAは起動に必須のHTML/JavaScript/CSSだけを原子的にキャッシュし、遅延読込chunk・アイコン・ライセンス文書はアプリ起動後のアイドル時に個別失敗を許容して追加保存します。データ節約設定または低速回線では追加保存を行わず、利用時に保存します。更新版は作業中に強制再読込せず、画面の更新操作を選んだ時に切り替えます。オフライン利用は最初のオンライン読込と準備完了後に有効です。
-- 3Dビューアと外部形状パーサは必要時に読み込まれます。外部形状の解析と形状診断はWorkerで行います。現ビルドの初期chunkは約313KBです。
+- 3Dビューアと外部形状パーサは必要時に読み込まれます。外部形状の解析と形状診断はWorkerで行います。現ビルドの初期chunkは約318KBです。
 - 保存形状の読込・検証をビューア、出力、診断で共通化しています。ZIP復元時も形状本体をDBへの最初の書込み前に検査し、破損した座標や面索引を含むZIPを部分保存せず拒否します。
 - 64MiB超のZIP展開データはOPFSを一時置場に使用します。OPFSまたはWeb Locks非対応ブラウザでは、そのサイズのZIP取込を拒否します。
 - 開発中のGitHub Actionsと自動公開ワークフローは停止しています。検証はローカルの `npm test` と `npm run build` で行います。GitHub Pages公開時のみPages内部の実行を許可します。
@@ -119,7 +121,7 @@ Scan2FEM is an experimental, static web application for organizing photos and vi
 | Camera capture UI (photos and recordings) | Implemented, but not yet validated with physical cameras |
 | External geometry import and viewer | Imports PLY points/triangles/quads and ASCII/binary STL with a selected input unit, preserving separate history. Also displays synthetic demo geometry and supports touch and two-point scale calibration |
 | Geometry diagnostics | Select a stored history entry to inspect dimensions, triangle area, degenerate faces, boundary/non-manifold edges, inconsistent winding and duplicate faces without changing it. Save a JSON report with methods and provenance |
-| Export | Project ZIP and PLY/STL from demo or external geometry; saved scale is applied to PLY/STL. ZIP uses streaming output and bounded input |
+| Export | Project ZIP and history-selected point-cloud PLY or surface PLY/STL; applies source-matched calibration. ZIP export checks restore limits before writing |
 | Offline use | Installable as a PWA; after initial preparation, the app shell can start offline |
 | Language and appearance | Japanese by default; English and light/dark themes can be selected |
 | Quick guide | Available in the app in Japanese and English |
@@ -162,15 +164,17 @@ Camera APIs require a secure context (HTTPS or `localhost`). Compatibility with 
 3. Check the image-set diagnostics in **Pipeline** and review flagged images in **Images**. Record a focal hint and its source if needed. Run **Generate demo** to inspect the downstream workflow, or add PLY/STL geometry with an explicit input unit in **Import**.
 4. Inspect the point cloud and surface in **Viewer**. Pick two geometry points (or enter X/Y/Z coordinates) and their measured distance to calibrate the current reconstruction series. Demo results are not reconstructions of your input data.
 5. In **Diagnostics**, choose a point cloud or surface from the stored history and select **Inspect geometry**. Review the results and methods, then use **Save diagnostics JSON** if needed.
-6. Save a project ZIP or an available data format from **Export**. Calibrated PLY/STL receives the scale factor, while original stage data in IndexedDB and ZIP stays unchanged. ZIPs over 128 MiB require direct saving in a supported browser.
+6. Save a project ZIP from **Export**, or select stored geometry from history: PLY for point clouds and PLY/STL for surfaces. Calibrated PLY/STL receives the scale factor, while original stage data in IndexedDB and ZIP stays unchanged. ZIPs over 128 MiB require direct saving in a supported browser. Geometry export runs in a cancelable Worker. Select the same project unit in the receiving application.
 
-After reconstruction is rerun into a different coordinate series, an older calibration is not applied automatically; pick two points again. When storage usage is high, export a project ZIP before deleting unneeded projects.
+After reconstruction is rerun into a different coordinate series, an older calibration is not applied automatically; pick two points again. When storage usage is high, export a project ZIP and verify restoration before deleting unneeded projects.
+
+ZIP export and restoration support at most 256 MiB per file, 1 GiB each for expanded data and the ZIP itself, 9,999 assets (10,000 entries including metadata), and 8 MiB of metadata. Export checks ZIP overhead and asset-size consistency before writing and rejects oversized or inconsistent archives. Keep the original data if these limits are exceeded; direct saving has the same restore limits.
 
 The in-app quick guide presents the same workflow and limitations in Japanese and English. Use the on-screen controls to change the language and light/dark theme.
 
 ## Geometry input and inspection scope
 
-PLY 1.0 supports ASCII, binary little-endian and binary big-endian input. Point clouds, triangles and quads are accepted; each quad is split into two triangles. Polygons with five or more vertices, incomplete payloads, mismatched payload lengths, invalid coordinates and invalid face indices are rejected. XYZ coordinates and face indices are retained; ancillary properties such as colors, UVs and normals are validated and skipped. External input is limited to 32 MiB and one million stored vertices and triangles each. STL stores vertices per triangle, so the vertex limit also applies.
+PLY 1.0 supports ASCII, binary little-endian and binary big-endian input. Point clouds, triangles and quads are accepted; each quad is split into two triangles. Polygons with five or more vertices, incomplete payloads, mismatched payload lengths, invalid coordinates and invalid face indices are rejected. XYZ coordinates and face indices are retained; ancillary properties such as colors, UVs and normals are validated and skipped. External input is limited to 32 MiB and one million stored vertices and triangles each. STL stores vertices per triangle, so the vertex limit also applies. Binary STL requires the declared triangle count to match the exact file length. ASCII STL validates the complete structure and three vertices per face; incomplete facets and extra data are rejected instead of partially imported. Surface PLY export preserves stored vertices and triangle indices.
 
 Inspection uses the selected history entry and never modifies the stored geometry. Calibration applies only when its source matches that geometry. Calculations use the same scaled Float32 coordinates as PLY/STL export; lengths use the project unit and areas its square. The UI identifies missing or different-source calibration. JSON reports include the asset/stage, demo/external origin, unit, applied scale, creation time, methods and unchecked items.
 
@@ -183,7 +187,7 @@ Edge and duplicate-face checks run only when both vertex and triangle counts are
 - This is a serverless static application. Long-running jobs use browser Web Workers and IndexedDB.
 - No WASM reconstruction component is bundled yet. The production app includes a Service Worker that supplies COOP/COEP-equivalent responses and reports `crossOriginIsolated` status in the UI.
 - The PWA atomically precaches only the HTML/JavaScript/CSS required to boot. Lazy chunks, icons, and license documents are cached independently while the app is idle, so an optional download failure does not block installation. That warmup is skipped on data-saving or slow connections and those resources are cached when used instead. An update does not force-reload active work; it switches only after the on-screen update action is selected. Offline use becomes available after the first online load and preparation.
-- The 3D viewer and external geometry parsers load on demand. External geometry parsing and geometry inspection run in Workers. The current initial JavaScript chunk is about 313 KB.
+- The 3D viewer and external geometry parsers load on demand. External geometry parsing and geometry inspection run in Workers. The current initial JavaScript chunk is about 318 KB.
 - The viewer, exports and diagnostics share stored-geometry loading and validation. ZIP restoration also checks geometry payloads before the first database write, rejecting invalid coordinates or face indices without saving a partial project.
 - ZIPs with over 64 MiB of expanded data use OPFS for temporary staging; importing them requires OPFS and Web Locks support.
 - GitHub Actions and automatic deployment workflows are disabled during development. Validation uses local `npm test` and `npm run build`; only the final GitHub Pages publication may run GitHub's internal Pages workflow.

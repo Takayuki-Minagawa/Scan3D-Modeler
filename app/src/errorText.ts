@@ -72,6 +72,9 @@ export function formatAppError(error: unknown, language: Language): string {
       'The PLY vertex or face count exceeds the import limit.',
     'STLの面数またはファイル長が不正です':
       'The STL face count or file length is invalid.',
+    'STLの構文が不正か、三角面データが不足しています':
+      'The STL syntax is invalid or triangle data is incomplete.',
+    'STLに不正な数値があります': 'The STL contains an invalid numeric value.',
     '頂点座標は空でないXYZの組で指定してください': 'Vertex coordinates must contain nonempty XYZ triples.',
     '頂点座標に無効な値があります': 'Vertex coordinates contain invalid or nonfinite values.',
     '三角面は空でない3頂点の組で指定してください': 'Mesh indices must contain nonempty triangle triples.',
@@ -98,8 +101,27 @@ export function formatAppError(error: unknown, language: Language): string {
     '形状診断が時間切れになりました': 'Geometry inspection timed out. Try a smaller geometry.',
     '形状診断の結果が不正です': 'The geometry inspection result is invalid.',
     '形状診断ワーカーが停止しました': 'The geometry inspection worker stopped.',
+    '形状出力が時間切れになりました': 'Geometry export timed out. Try a smaller geometry.',
+    '形状出力の結果が不正です': 'The geometry export result is invalid.',
+    '形状出力ワーカーが停止しました': 'The geometry export worker stopped.',
+    '形状の種類と出力形式の組み合わせが不正です': 'This export format does not support the selected geometry kind.',
+    '128MiBを超えるZIPは直接保存に対応したブラウザで出力してください':
+      'ZIPs over 128 MiB require a browser that supports direct saving.',
   };
   if (exact[message]) return exact[message];
+
+  if (message.startsWith('復元できるZIPを作成できません:')) {
+    const reason = message.slice('復元できるZIPを作成できません: '.length).split('。')[0];
+    const reasons: Record<string, string> = {
+      'プロジェクト情報が8MiBの上限を超えているか不正です': 'Project metadata is invalid or exceeds 8 MiB.',
+      'アセット数が9,999件の上限を超えています': 'The project exceeds 9,999 assets.',
+      'アセットIDが不正または重複しています': 'Asset IDs are invalid or duplicated.',
+      '1件のアセットが256MiBの上限を超えているかサイズが不正です': 'An asset has an invalid size or exceeds 256 MiB.',
+      'ZIP全体が1GiBの上限を超えています': 'The complete ZIP exceeds 1 GiB.',
+      'アセット本体と保存サイズが一致しません': 'Stored asset data does not match its recorded size.',
+    };
+    return `Cannot create a restorable ZIP: ${reasons[reason] ?? 'The project exceeds restore limits.'} Keep the original project.`;
+  }
 
   if (message.startsWith('ZIP内の形状データが不正です:')) {
     return 'The ZIP contains invalid geometry data or could not be validated. Nothing was imported.';
