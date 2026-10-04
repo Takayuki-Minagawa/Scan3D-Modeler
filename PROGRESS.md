@@ -273,3 +273,13 @@ Web、GitHubの一次資料と現在のコードを照合し、画像セット�
 - ブラウザで既存テスト形状の履歴切替、別系列校正の出力抑止、一致する校正×2の表示、実WorkerでPLY(300B)/STL(284B)生成を確認。コンソール警告・エラー0件。内蔵ブラウザのdownloadイベントは保存先を返さず、ディスク上の保存確認は別途必要。
 - 既存の未実施フェーズ計画は保持する。実再構成/WASM、四面体メッシュ、実カメラ等は今回の変更対象外。監査で見つかった動画抽出の保存直後クラッシュ時の重複防止は継続課題。
 - 調査資料: https://threejs.org/docs/pages/PLYExporter.html 、https://github.com/mrdoob/three.js/blob/master/examples/jsm/exporters/PLYExporter.js 、https://www.loc.gov/preservation/digital/formats/fdd/fdd000505.shtml 、https://www.loc.gov/preservation/digital/formats/fdd/fdd000506.shtml
+
+
+### PR #5 独立レビュー・最終検証
+
+- [PR #5](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/5)作成後、3名のサブエージェントが各自の実装担当以外をレビュー。出力UI・Worker、STL/ZIP、非同期状態・文書を確認し、追加の修正必須事項なし。
+- PLYをThree.js PLYLoaderでも読込み、共有索引・点群・TypedArray部分ビューの互換性を独立確認。STL切断316ケース・構文破損5ケースを拒否。
+- 実ZIP出力→復元をDB境界のみモックした独立ビルドで確認。256MiB超過、保存サイズ不一致、不正IDの直接保存はcreateWritable/Blob.stream開始前に拒否。128MiBの通常保存上限もヘッダを含めて判定。
+- ブラウザで日英の形状出力と通常ZIP出力(2.4KB)、375px幅で水平はみ出しがないことを確認。通常出力の保存先は内蔵ブラウザから取得できなかったため、OS保存ファイル自体の確認は未実施。コード上の生成/往復と画面の生成完了は確認済み。
+- 完了した一時作業計画 `WORK_PLAN.md` を削除（初期計画はコミット `c925290` に保持）。未実施フェーズの正本計画は継続開発に必要なため保持。
+- GitHub上のPRは競合なし、Actionsは無効でworkflow未実行。最終マージ後、mainへ同期して今回の作業ブランチをローカル/リモートから削除する。
