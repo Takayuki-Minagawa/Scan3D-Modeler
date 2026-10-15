@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { buildInfo } from './scripts/build-info.mjs';
 import react from '@vitejs/plugin-react';
 
 // SharedArrayBuffer(将来のWASMスレッド並列化)に必要な開発/preview用ヘッダ。
@@ -9,6 +10,9 @@ const crossOriginIsolation = {
 };
 
 export default defineConfig({
+  define: {
+    __BUILD_INFO__: JSON.stringify(buildInfo()),
+  },
   // 静的ホスティングのサブパス配信でも動くよう相対パスにする
   base: './',
   plugins: [react()],
