@@ -988,6 +988,12 @@ async function importProjectEntries(entries: Map<string, Blob>): Promise<Project
       ) {
         throw new Error(`サムネイル「${asset.name}」の原画参照が不正です`);
       }
+    } else if (asset.kind === 'frame' && asset.sourceAssetId) {
+      // frame → 抽出元video。動画だけ削除済みの参照切れは復元時に外す(下の振り直しで処理)。
+      const source = assetById.get(asset.sourceAssetId);
+      if (source && source.kind !== 'video') {
+        throw new Error(`フレーム「${asset.name}」の抽出元参照が不正です`);
+      }
     } else if (asset.sourceAssetId) {
       throw new Error(`アセット「${asset.name}」に不正な原画参照があります`);
     }
@@ -1082,7 +1088,8 @@ async function importProjectEntries(entries: Map<string, Blob>): Promise<Project
       projectId: project.id,
       stageId: a.stageId ? remap(a.stageId) : null,
       thumbnailAssetId: a.thumbnailAssetId ? remap(a.thumbnailAssetId) : undefined,
-      sourceAssetId: a.sourceAssetId ? remap(a.sourceAssetId) : undefined,
+      sourceAssetId:
+        a.sourceAssetId && assetById.has(a.sourceAssetId) ? remap(a.sourceAssetId) : undefined,
     },
   }));
 

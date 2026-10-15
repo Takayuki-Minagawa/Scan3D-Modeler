@@ -4,7 +4,9 @@ import { localizeError } from '../errorText';
 import { DEFAULT_BLUR_THRESHOLD } from '../jobs/blurClient';
 import { useI18n } from '../i18n';
 import { Section } from '../ui/common';
+import { useConfirm } from '../ui/ConfirmDialog';
 import { timestampName } from '../ui/misc';
+import { cameraErrorGuidance, classifyCameraError } from './cameraError';
 import { saveStillFromVideo } from './imageUtil';
 import { startFrameExtraction } from './startFrameExtraction';
 
@@ -17,6 +19,7 @@ type LocalizedMessage = { ja: string; en: string };
  */
 export function CapturePanel(props: { projectId: string; onCaptured: () => void }) {
   const { tr } = useI18n();
+  const [confirmDialog, confirm] = useConfirm();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -134,13 +137,15 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
       setActive(false);
       setStarting(false);
       const reason = localizeError(e);
+      const guidance = cameraErrorGuidance(
+        classifyCameraError(e, {
+          secureContext: window.isSecureContext,
+          mediaDevices: Boolean(navigator.mediaDevices?.getUserMedia),
+        }),
+      );
       setError({
-        ja:
-          `カメラを起動できません: ${reason.ja}。` +
-          'HTTPSまたはlocalhostでのみカメラを使用できます。ファイル取込も利用できます。',
-        en:
-          `Could not start camera: ${reason.en}. ` +
-          'Camera access requires HTTPS or localhost. You can also use file import.',
+        ja: `カメラを起動できません: ${guidance.ja}(詳細: ${reason.ja})ファイル取込も利用できます。`,
+        en: `Could not start camera: ${guidance.en} (Details: ${reason.en}) You can also use file import.`,
       });
     }
   }
@@ -197,6 +202,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
         if (e.data.size) chunks.push(e.data);
       };
       createdRecorder.onstop = async () => {
+        let released = false;
         try {
           const type = createdRecorder.mimeType || 'video/webm';
           const ext = type.includes('mp4') ? 'mp4' : 'webm';
@@ -217,13 +223,19 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
             en: `Recording saved: ${asset.name}`,
           });
           props.onCaptured();
+          // 保存は完了済み。抽出の確認を待つ間も次の録画を始められるよう先に解放する。
+          releaseRecorder(createdRecorder);
+          released = true;
           if (
-            window.confirm(
-              tr(
-                '録画からキーフレーム抽出を開始しますか?(後からでも実行できます)',
-                'Start keyframe extraction from this recording? (You can do this later.)',
+            await confirm({
+              title: tr('キーフレーム抽出', 'Keyframe extraction'),
+              message: tr(
+                `録画「${asset.name}」からキーフレーム抽出を開始しますか?(後から「ファイル取込」の動画一覧でも実行できます)`,
+                `Start keyframe extraction from “${asset.name}”? (You can also run it later from the video list in File import.)`,
               ),
-            )
+              confirmLabel: tr('抽出を開始', 'Start extraction'),
+              cancelLabel: tr('後で', 'Later'),
+            })
           ) {
             try {
               const started = await startFrameExtraction(props.projectId, asset.id, asset.name);
@@ -255,7 +267,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
           });
         } finally {
           // onstopはこのrecorderに対応する保存が完了した時点でのみ門番を外す。
-          releaseRecorder(createdRecorder);
+          if (!released) releaseRecorder(createdRecorder);
         }
       };
       recorderRef.current = createdRecorder;
@@ -304,7 +316,7 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
           )}
         </p>
       )}
-      {error && <p className="warn-box">{tr(error.ja, error.en)}</p>}
+      {error && <p className="warn-box" role="alert">{tr(error.ja, error.en)}</p>}
       <div className="row wrap">
         {!active ? (
           <button
@@ -359,13 +371,14 @@ export function CapturePanel(props: { projectId: string; onCaptured: () => void 
           )}
         </div>
       )}
-      {status && <p className="hint">{tr(status.ja, status.en)}</p>}
+      <p className="hint" role="status" aria-live="polite">{status && tr(status.ja, status.en)}</p>
       <p className="hint">
         {tr(
           '撮影のコツ: 対象物の周囲を「中間高さ→上方→(必要なら)下方」の順に一定距離でゆっくり周回します(使用書§8)。',
           'Capture tip: Move slowly around the object at a consistent distance, from mid-height to above and, if needed, below.',
         )}
       </p>
+      {confirmDialog}
     </Section>
   );
 }

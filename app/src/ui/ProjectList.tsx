@@ -11,12 +11,14 @@ import { getProjectStorageSummaries } from '../storage/projectStorage';
 import { Section } from './common';
 import { fmtDateTime } from './misc';
 import { AppControls } from './AppControls';
+import { useConfirm } from './ConfirmDialog';
 
 type LocalizedMessage = { ja: string; en: string };
 
 /** トップ画面: プロジェクト一覧+新規作成(使用書§7)+ZIPインポート */
 export function ProjectList(props: { onOpen: (id: string) => void }) {
   const { language, tr } = useI18n();
+  const [confirmDialog, confirm] = useConfirm();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [status, setStatus] = useState<LocalizedMessage | null>(null);
@@ -110,12 +112,15 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
   async function remove(p: Project) {
     if (
-      !window.confirm(
-        tr(
-          `プロジェクト「${p.name}」を完全に削除しますか?(元に戻せません)`,
-          `Permanently delete project “${p.name}”? This cannot be undone.`,
+      !(await confirm({
+        title: tr('プロジェクトを削除', 'Delete project'),
+        message: tr(
+          `プロジェクト「${p.name}」と、その画像・動画・形状履歴をすべて削除します。元に戻せません。必要ならZIPで退避してから削除してください。`,
+          `Delete project “${p.name}” with all its images, videos and geometry history? This cannot be undone. Export a ZIP first if you need it.`,
         ),
-      )
+        confirmLabel: tr('削除する', 'Delete'),
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -345,6 +350,7 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
           'The app can only represent surfaces visible in captures; it cannot infer internal structure or thickness. Do not make safety decisions from these results alone.',
         )}
       </footer>
+      {confirmDialog}
     </main>
   );
 }

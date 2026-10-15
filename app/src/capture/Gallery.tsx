@@ -9,6 +9,7 @@ import {
 import { useI18n } from '../i18n';
 import type { AssetMeta } from '../types';
 import { Badge, Section } from '../ui/common';
+import { useConfirm } from '../ui/ConfirmDialog';
 import { prepareImageAsset } from './imageUtil';
 import { diagnoseThumbnail, profileThumbnail, type ThumbnailDiagnosis, type ThumbnailProfile } from './diagnosis';
 
@@ -247,6 +248,7 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSav
  */
 export function Gallery(props: { projectId: string; refreshKey: number; onChanged: () => void }) {
   const { tr } = useI18n();
+  const [confirmDialog, confirm] = useConfirm();
   const [assets, setAssets] = useState<AssetMeta[]>([]);
   const [urls, setUrls] = useState<Map<string, string>>(new Map());
   const [filter, setFilter] = useState<Filter>('all');
@@ -387,12 +389,15 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
 
   async function remove(a: AssetMeta) {
     if (
-      !window.confirm(
-        tr(
-          `「${a.name}」を削除しますか?(元に戻せません)`,
+      !(await confirm({
+        title: tr('画像を削除', 'Delete image'),
+        message: tr(
+          `「${a.name}」を削除します。元に戻せません。`,
           `Delete “${a.name}”? This cannot be undone.`,
         ),
-      )
+        confirmLabel: tr('削除する', 'Delete'),
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -550,6 +555,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         setAssets((previous) => previous.map((asset) => asset.id === updated.id ? updated : asset));
         props.onChanged();
       }} />}
+      {confirmDialog}
     </Section>
   );
 }
