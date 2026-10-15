@@ -3,7 +3,7 @@
 **このファイルは開発の中断・再開のための引き継ぎ台帳です。**
 作業を再開するときは、①このファイル ②[Webアプリ構築_作業計画.md](Webアプリ構築_作業計画.md) ③`git log` の3つを読めば状況を把握できます。作業を進めたら必ずこのファイルを更新してください。
 
-最終更新: 2026-10-15(修正要望レポート対応: 動画削除・確認ダイアログ・ビューア履歴・タブURL・プロジェクト編集ほか)
+最終更新: 2026-10-15(PR #6 マージと GitHub Pages 再公開: 公開コミット `eca277f` = main `7bf78e4`)
 
 ---
 
@@ -13,7 +13,7 @@
 MITライセンス・依存ライセンス検査、容量保全、保存サムネイル/EXIF、2点スケール、COI対応PWA、ビューアのコード分割が入った。
 実再構成(OpenMVG/自前MVS/PoissonRecon/Manifold/fTetWild のWASM化)は**Emscripten未整備・実測条件未充足でソースビルド未実施**。2026-09-25時点でCMakeは利用可能になったが、引き続きスタブ+合成デモで代替中。
 2026-09-25にWeb・GitHub調査に基づくF1〜F3を実装し、[PR #3](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/3)をレビュー・修正後にマージした。作業用の追加機能計画MDは整理のため削除。開発中のGitHub Actionsは禁止、最終公開時のGitHub Pagesのみ許可。
-2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)は28テスト・本番ビルド・ブラウザ確認・独立レビューと修正を経てmainへマージ済み（`e5137c9`）。[GitHub Pages公開版](https://takayuki-minagawa.github.io/Scan3D-Modeler/)も更新済み（公開コミット`364bbde`）。
+2026-09-30は全面改修を不要と判断し、形状の検証・読込を共通化して、履歴ごとの非破壊診断とJSON保存を追加した。外部PLYとZIP復元の検証も補強。[PR #4](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/4)は28テスト・本番ビルド・ブラウザ確認・独立レビューと修正を経てmainへマージ済み（`e5137c9`）。[GitHub Pages公開版](https://takayuki-minagawa.github.io/Scan3D-Modeler/)も更新済み（公開コミット`364bbde`）。2026-10-15に修正要望対応の[PR #6](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/6)をmainへマージし（`7bf78e4`）、公開版も再公開済み（公開コミット`eca277f`、ヘッダーに「版 7bf78e4」を表示）。
 
 ```
 cd app && npm install && npm run dev   # http://localhost:5173
@@ -222,8 +222,7 @@ LGTM付きレビューの軽微な提案4件を確認し、次のとおり反映
 
 ## 次にやること(優先順)
 
-1. `claude/fix-requests-2026-10-15` をレビューしてmainへマージし、ユーザー承認のうえ `main` をビルドして `gh-pages` を更新する(公開版 `364bbde` は PR #5 以降の機能を含まない)。公開時のみActionsを一時有効化し、完了後に無効へ戻す。
-2. Emscripten固定版、20〜60枚の実撮影画像、CAD正解形状、Android端末を揃え、フェーズ0の技術・性能・精度検証を続ける。F4/F5はこの測定で採否を決める。
+1. Emscripten固定版、20〜60枚の実撮影画像、CAD正解形状、Android端末を揃え、フェーズ0の技術・性能・精度検証を続ける。F4/F5はこの測定で採否を決める。
 
 ## 追加機能の再調査(2026-09-25)
 
@@ -296,4 +295,12 @@ Web、GitHubの一次資料と現在のコードを照合し、画像セット�
 - **画像一覧:** カードにファイル名・動画時刻・手入力焦点距離、読込不可バッジ。詳細に前へ/次へ(←→)・位置・削除。焦点距離検証を条件別に。一括除外に確認、「除外をすべて採用に戻す」。除外ボタンの折返しを修正。
 - **ジョブ一覧:** 最新12件の注記と「すべて表示」、完了ジョブは段階成果(点数・三角形数など)を表示、経過時間(作成〜終了、一時停止込み)。外部形状取込の結果に role=status。
 - **ローカル検証:** `npm test` 55テスト(新規: importFiles / cameraError / videoFrames / projectValidation / route)、`npm run typecheck`、`npm run build`(ライセンス検査・PWA生成込み)成功。初期chunk約345KB。内蔵ブラウザ(localhost:5173, 1024×768)で、寸法0の作成拒否、作成後 `#/p/<id>`、ARIAタブ、ストレージ1行表示、ビルド版表示、合成ファイル(JPEG×2・PNG・偽HEIC・テキスト・1.5秒webm)のドロップ取込→ログ2件・対象外1件スキップ・読込不可バッジ・自動抽出6フレーム、画像詳細の→送りとEsc、デモ生成2回→完了ジョブの成果表示と経過時間、ビューアで点群#1/#2の切替(別系列の警告表示)、ブラウザの戻るでタブ復帰、動画削除ダイアログ(フレーム6枚同時削除)、編集フォームでの更新と0拒否、375px幅でタブ2段折返し・横スクロールなし、英語表示、コンソールエラー0件を確認。
-- **未検証・継続課題:** 実カメラでの権限拒否メッセージ表示、OSダイアログ経由のフォルダ選択と実機での貼付け、gh-pages再公開(ユーザー承認後)。レポートの低優先項目(ビューアの軸/スケールバー/視点プリセット/PNG保存、画像の並べ替え・複数選択、パイプラインの履歴一覧、診断結果の永続化、出力内容の選択、設定画面、プロジェクト一覧の検索・複製、外部形状の単位記憶、キーボードショートカット)は見送り。
+- **未検証・継続課題:** 実カメラでの権限拒否メッセージ表示、OSダイアログ経由のフォルダ選択と実機での貼付け、レポートの低優先項目(ビューアの軸/スケールバー/視点プリセット/PNG保存、画像の並べ替え・複数選択、パイプラインの履歴一覧、診断結果の永続化、出力内容の選択、設定画面、プロジェクト一覧の検索・複製、外部形状の単位記憶、キーボードショートカット)は見送り。
+
+### GitHub Pages再公開(2026-10-15)
+
+- [PR #6](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/pull/6)(`claude/fix-requests-2026-10-15`、8コミット)をユーザー指示によりmerge commitでmainへマージ(`7bf78e4`)。マージ後のmainで `npm ci` → `npm test`(55テスト成功)→ `npm run build`(ライセンス検査・型検査・vite build・PWA precache生成)を通し、初期chunk `index-2prt-1K3.js` 345.10 kB(gzip 112.01 kB)、ViewerPanel chunk 525.28 kB。埋込みビルド版は `7bf78e4`(未コミット変更なし)。
+- `gh-pages` を別worktreeに取り出し、旧アセット(`index-DppKCDwH.js`、`ViewerPanel-CO7SnUfw.js`、`STLLoader-Boq_malA.js` ほか)を削除して `app/dist` をルートへ配置、`.nojekyll` を維持。公開コミット `eca277fb7d6f3c4cdcb14f6ac35d95479c9bec40` をユーザー承認後にプッシュ。
+- Pagesビルドのためだけに Actions を一時有効化(`actions/permissions` の `enabled` は `-F` で真偽値として送る必要あり。`-f` だと422)。push時点ではActionsが無効だったため `POST /pages/builds` で明示的にビルドを要求。[pages build and deployment #38706591034](https://github.com/Takayuki-Minagawa/Scan3D-Modeler/actions/runs/38706591034) は成功し、Pages APIは `eca277f` の `built` を返した。開発用workflowは追加せず、完了後にActionsを再び無効化(`enabled: false` を確認)。
+- 公開URLの17配信ファイル(`.nojekyll` 含む)すべてがHTTP 200を返し、SHA-256がローカル `app/dist` と一致。内蔵ブラウザで公開版を開き、ヘッダーに「版 7bf78e4 · 2026/10/15 17:32」、新しい `index-2prt-1K3.js` / `index-C_NFuFAC.css` の読込、Service Worker登録1件、コンソールエラー0件を確認。
+- 運用メモ: zshで `while read sha path` のように変数名 `path` を使うと `PATH` が上書きされコマンドが見つからなくなる。検証スクリプトは別名か Python で書く。
