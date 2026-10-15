@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { exportGeometryBlob } from '../export/geometryWorkerClient';
 import { exportProjectZip, saveProjectZipDirectly } from '../export/zip';
 import { localizeError, type LocalizedError } from '../errorText';
+import { geometryHistoryLabel, geometryOriginLabel } from '../geometry/labels';
 import { geometryBlob, listGeometryAssets, type GeometryAsset } from '../geometry/repository';
 import { useI18n } from '../i18n';
 import type { Project } from '../types';
@@ -10,7 +11,7 @@ import { Section } from './common';
 import { downloadBlob, fmtBytes } from './misc';
 
 export function ExportPanel(props: { project: Project; refreshKey: number }) {
-  const { tr } = useI18n();
+  const { language, tr } = useI18n();
   const [entries, setEntries] = useState<GeometryAsset[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -131,11 +132,7 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
     setStatus({ ja: '形状の出力を中止しました', en: 'Geometry export canceled' });
   }
 
-  function originLabel(entry: GeometryAsset) {
-    if (entry.stage?.demo || entry.stage?.origin === 'demo') return tr('デモ', 'Demo');
-    if (entry.stage?.origin === 'external') return tr('外部取込', 'External import');
-    return tr('保存データ', 'Stored data');
-  }
+  const originLabel = (entry: GeometryAsset) => geometryOriginLabel(entry, tr);
 
   return (
     <Section title={tr('データ出力', 'Data export')}>
@@ -167,8 +164,7 @@ export function ExportPanel(props: { project: Project; refreshKey: number }) {
               onChange={(event) => { setSelectedId(event.target.value); setError(null); }}>
               {entries.length === 0 && <option value="">{loading ? tr('読み込み中…', 'Loading…') : tr('形状データなし', 'No geometry')}</option>}
               {[...entries].reverse().map((entry) => <option key={entry.asset.id} value={entry.asset.id}>
-                {originLabel(entry)} · {entry.asset.kind === 'mesh' ? tr('サーフェス', 'Surface') : tr('点群', 'Point cloud')}
-                {` #${entry.stage?.seq ?? '-'} · ${entry.asset.name}`}
+                {geometryHistoryLabel(entry, tr, language)}
               </option>)}
             </select>
           </label>

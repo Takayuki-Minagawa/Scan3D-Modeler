@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateProjectScaleCalibration } from '../db/projects';
 import { localizeError } from '../errorText';
+import { geometryHistoryLabel } from '../geometry/labels';
 import { listGeometryAssets, loadGeometry, type GeometryAsset } from '../geometry/repository';
 import { useI18n } from '../i18n';
 import type { Project } from '../types';
@@ -19,15 +20,18 @@ type Loaded = GeometryAsset;
 
 const EMPTY_COORDINATES = ['', '', '', '', '', ''] as const;
 
-/** 3Dビューア(1D)。最新の点群・サーフェスを表示する */
+/** 3Dビューア(1D)。保存履歴から選んだ点群・サーフェスを表示する(既定は最新) */
 export function ViewerPanel(props: {
   project: Project;
   refreshKey: number;
   onProjectChange: (project: Project) => void;
 }) {
-  const { tr } = useI18n();
+  const { language, tr } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<ThreeView | null>(null);
+  const [entries, setEntries] = useState<GeometryAsset[]>([]);
+  const [cloudId, setCloudId] = useState('');
+  const [meshId, setMeshId] = useState('');
   const [cloud, setCloud] = useState<Loaded | null>(null);
   const [mesh, setMesh] = useState<Loaded | null>(null);
   const [showPoints, setShowPoints] = useState(true);
@@ -120,6 +124,32 @@ export function ViewerPanel(props: {
     setKnownDistance(String(Number(distance.toPrecision(8))));
   }, [factor, measurementPoints]);
 
+  // 履歴一覧は再読込(refreshKey)ごとに取り直す。選択中の履歴が残っていれば維持し、
+  // なければ各種類の最新を既定にする(以前の「最新固定」と同じ振る舞い)。
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    listGeometryAssets(props.project.id)
+      .then((next) => {
+        if (!alive) return;
+        const latest = (kind: 'pointcloud' | 'mesh') =>
+          next.filter((entry) => entry.asset.kind === kind).at(-1)?.asset.id ?? '';
+        setEntries(next);
+        setCloudId((id) => (next.some((entry) => entry.asset.id === id) ? id : latest('pointcloud')));
+        setMeshId((id) => (next.some((entry) => entry.asset.id === id) ? id : latest('mesh')));
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setEntries([]);
+        setError(localizeError(e));
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [props.project.id, props.refreshKey]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -130,17 +160,14 @@ export function ViewerPanel(props: {
       try {
         // I/Oとdecodeはすべてlocalへ準備し、最後のalive確認後に一括commitする。
         // cleanup済みeffectがThreeViewへ途中結果を書き、新effectを上書きするのを防ぐ。
-        const entries = await listGeometryAssets(props.project.id);
-        if (!alive) return;
-
-        const cloudEntry = entries.filter((entry) => entry.asset.kind === 'pointcloud').at(-1);
+        const cloudEntry = entries.find((entry) => entry.asset.id === cloudId && entry.asset.kind === 'pointcloud');
         let nextCloud: { loaded: Loaded; points: Float32Array } | null = null;
         if (cloudEntry) {
           const geometry = await loadGeometry(cloudEntry);
           nextCloud = { loaded: cloudEntry, points: geometry.positions };
         }
 
-        const meshEntry = entries.filter((entry) => entry.asset.kind === 'mesh').at(-1);
+        const meshEntry = entries.find((entry) => entry.asset.id === meshId && entry.asset.kind === 'mesh');
         let nextMesh:
           | { loaded: Loaded; positions: Float32Array; indices: Uint32Array }
           | null = null;
@@ -188,7 +215,7 @@ export function ViewerPanel(props: {
     return () => {
       alive = false;
     };
-  }, [props.project.id, props.project.scaleCalibration, props.refreshKey]);
+  }, [entries, cloudId, meshId, props.project.scaleCalibration]);
 
   useEffect(() => {
     visRef.current.points = showPoints;
@@ -227,7 +254,8 @@ export function ViewerPanel(props: {
     const next = points.slice(0, 2);
     setMeasurementPoints(next);
     if (next.length === 2) {
-      setCoordinateInputs(next.flatMap((point) => point.map((value) => String(value))));
+      // 表示は6桁に丸める。校正計算にはmeasurementPointsの内部値をそのまま使う。
+      setCoordinateInputs(next.flatMap((point) => point.map((value) => String(Number(value.toPrecision(6))))));
     } else if (next.length === 0) {
       setCoordinateInputs([...EMPTY_COORDINATES]);
     }
@@ -356,6 +384,32 @@ export function ViewerPanel(props: {
           {tr(error.ja, error.en)}
         </p>
       )}
+      {entries.length > 0 && (
+        <div className="row wrap viewer-history">
+          {(['pointcloud', 'mesh'] as const).map((kind) => {
+            const options = entries.filter((entry) => entry.asset.kind === kind);
+            if (options.length === 0) return null;
+            const isCloud = kind === 'pointcloud';
+            return (
+              <label key={kind}>
+                {isCloud ? tr('表示する点群(保存履歴)', 'Point cloud to show (history)') : tr('表示するサーフェス(保存履歴)', 'Surface to show (history)')}
+                <select
+                  value={isCloud ? cloudId : meshId}
+                  disabled={loading}
+                  data-testid={isCloud ? 'viewer-cloud-history' : 'viewer-mesh-history'}
+                  onChange={(event) => (isCloud ? setCloudId(event.target.value) : setMeshId(event.target.value))}
+                >
+                  {[...options].reverse().map((entry) => (
+                    <option key={entry.asset.id} value={entry.asset.id}>
+                      {geometryHistoryLabel(entry, tr, language)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+        </div>
+      )}
       <div className="viewer" ref={containerRef}>
         {!loading && !cloud && !mesh && (
           <div className="viewer-empty">
@@ -472,7 +526,7 @@ export function ViewerPanel(props: {
               </button>
             )}
           </div>
-          {scaleStatus && <p className="hint">{tr(scaleStatus.ja, scaleStatus.en)}</p>}
+          <p className="hint" role="status" aria-live="polite">{scaleStatus && tr(scaleStatus.ja, scaleStatus.en)}</p>
           <p className="hint">
             {tr(
               '校正は表示とPLY/STL出力に適用されます。元の段階データは上書きしません。',

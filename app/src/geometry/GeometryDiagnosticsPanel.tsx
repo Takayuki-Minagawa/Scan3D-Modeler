@@ -4,12 +4,13 @@ import { useI18n } from '../i18n';
 import type { Project } from '../types';
 import { Badge, Section } from '../ui/common';
 import { downloadBlob } from '../ui/misc';
+import { geometryHistoryLabel, geometryOriginLabel } from './labels';
 import { geometryBlob, listGeometryAssets, type GeometryAsset } from './repository';
 import { createGeometryReport, diagnosticScale, type GeometryReport } from './report';
 import { inspectGeometryBlob } from './workerClient';
 
 export function GeometryDiagnosticsPanel(props: { project: Project; refreshKey: number }) {
-  const { tr } = useI18n();
+  const { language, tr } = useI18n();
   const [entries, setEntries] = useState<GeometryAsset[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -80,11 +81,7 @@ export function GeometryDiagnosticsPanel(props: { project: Project; refreshKey: 
     setRunningKey(null);
   }
 
-  function originLabel(entry: GeometryAsset) {
-    if (entry.stage?.demo || entry.stage?.origin === 'demo') return tr('デモ', 'Demo');
-    if (entry.stage?.origin === 'external') return tr('外部取込', 'External import');
-    return tr('保存データ', 'Stored data');
-  }
+  const originLabel = (entry: GeometryAsset) => geometryOriginLabel(entry, tr);
 
   const number = (value: number) => Number(value.toPrecision(7)).toLocaleString(undefined, { maximumSignificantDigits: 7 });
   const diagnostics = report?.diagnostics;
@@ -105,8 +102,7 @@ export function GeometryDiagnosticsPanel(props: { project: Project; refreshKey: 
             {entries.length === 0 && <option value="">{loading ? tr('読み込み中…', 'Loading…') : tr('形状データなし', 'No geometry')}</option>}
             {[...entries].reverse().map((entry) => (
               <option key={entry.asset.id} value={entry.asset.id}>
-                {originLabel(entry)} · {entry.asset.kind === 'mesh' ? tr('サーフェス', 'Surface') : tr('点群', 'Point cloud')}
-                {` #${entry.stage?.seq ?? '-'} · ${entry.asset.name}`}
+                {geometryHistoryLabel(entry, tr, language)}
               </option>
             ))}
           </select>
