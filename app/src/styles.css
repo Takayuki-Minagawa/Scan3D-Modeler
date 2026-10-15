@@ -491,10 +491,21 @@ label.check {
   font-size: 0.72rem;
   color: var(--muted);
 }
+.shot-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .shot-caption-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+.shot-caption-row .mini {
+  white-space: nowrap;
 }
 .shot-caption-row .mini:first-of-type {
   margin-left: auto;
@@ -967,6 +978,10 @@ label.check {
 }
 
 @media (max-width: 560px) {
+  .tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
   .container {
     padding: 8px 8px 40px;
   }
@@ -1019,6 +1034,12 @@ label.check {
 .viewer-history { margin-bottom: 8px; }
 .viewer-history label { flex: 1 1 18rem; }
 .build-info { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.storage-card-compact { padding: 8px 14px; }
+.storage-compact-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.storage-compact-row h2 { margin: 0; font-size: 0.95rem; }
+.storage-compact-row .mini { margin-left: auto; }
+.project-edit-form textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; }
+.warn-box ul, ul.warn-box { margin: 0; padding-left: 1.2em; }
 .diagnostics-controls label, .geometry-export label, .viewer-history label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
 .diagnostics-controls select, .geometry-export select, .viewer-history select { min-width: 0; width: 100%; max-width: 38rem; box-sizing: border-box; }
 .export-grid > div { min-width: 0; overflow-wrap: anywhere; }

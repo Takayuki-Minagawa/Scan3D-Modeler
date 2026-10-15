@@ -12,6 +12,8 @@ import { Section } from './common';
 import { fmtDateTime } from './misc';
 import { AppControls } from './AppControls';
 import { useConfirm } from './ConfirmDialog';
+import { projectValidationMessage } from './ProjectEditForm';
+import { validateProjectInput } from './projectValidation';
 
 type LocalizedMessage = { ja: string; en: string };
 
@@ -39,6 +41,7 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
   const [d, setD] = useState('100');
   const [captureMethod, setCaptureMethod] = useState<CaptureMethod>('video');
   const [scaleMethod, setScaleMethod] = useState<ScaleMethod>('twoPoint');
+  const [formErrors, setFormErrors] = useState<string[]>([]);
 
   const captureMethodLabels: Record<CaptureMethod, string> = {
     video: tr('動画', 'Video'),
@@ -79,15 +82,13 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !objectName.trim()) return;
-    const p = await createProject({
-      name: name.trim(),
-      objectName: objectName.trim(),
-      unit,
-      approxSize: { w: Number(w) || 0, h: Number(h) || 0, d: Number(d) || 0 },
-      captureMethod,
-      scaleMethod,
-    });
+    const result = validateProjectInput({ name, objectName, w, h, d });
+    if (!result.ok) {
+      setFormErrors(result.errors.map((error) => projectValidationMessage(error, tr)));
+      return;
+    }
+    setFormErrors([]);
+    const p = await createProject({ ...result.value, unit, captureMethod, scaleMethod });
     props.onOpen(p.id);
   }
 
@@ -229,15 +230,15 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
                 </label>
                 <label>
                   {tr('幅', 'Width')}
-                  <input type="number" value={w} onChange={(e) => setW(e.target.value)} min="0" />
+                  <input type="number" value={w} onChange={(e) => setW(e.target.value)} min="0.001" step="any" required />
                 </label>
                 <label>
                   {tr('高さ', 'Height')}
-                  <input type="number" value={h} onChange={(e) => setH(e.target.value)} min="0" />
+                  <input type="number" value={h} onChange={(e) => setH(e.target.value)} min="0.001" step="any" required />
                 </label>
                 <label>
                   {tr('奥行き', 'Depth')}
-                  <input type="number" value={d} onChange={(e) => setD(e.target.value)} min="0" />
+                  <input type="number" value={d} onChange={(e) => setD(e.target.value)} min="0.001" step="any" required />
                 </label>
               </div>
               <div className="form-row">
@@ -268,6 +269,17 @@ export function ProjectList(props: { onOpen: (id: string) => void }) {
                   </select>
                 </label>
               </div>
+              <p className="hint">
+                {tr(
+                  '撮影方法とスケール設定は記録用の参考情報です(後から編集できます)。概算寸法は形状診断で校正後の寸法と大きく食い違う場合の警告に使います。',
+                  'Capture method and scale setting are reference notes (editable later). The approximate size is used to warn when inspected dimensions differ greatly.',
+                )}
+              </p>
+              {formErrors.length > 0 && (
+                <ul className="warn-box" role="alert">
+                  {formErrors.map((error) => <li key={error}>{error}</li>)}
+                </ul>
+              )}
               <div className="row">
                 <button type="submit" className="primary">
                   {tr('プロジェクトを作成', 'Create project')}

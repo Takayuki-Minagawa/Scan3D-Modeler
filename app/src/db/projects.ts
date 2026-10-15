@@ -29,6 +29,31 @@ export async function touchProject(id: string): Promise<void> {
   if (p) await d.put('projects', { ...p, updatedAt: now() });
 }
 
+export type ProjectDetailsPatch = Pick<
+  Project,
+  'name' | 'objectName' | 'approxSize' | 'captureMethod' | 'scaleMethod' | 'note'
+>;
+
+/** 作成後の編集。単位と校正は校正値・ZIPとの整合性のため変更しない。 */
+export async function updateProjectDetails(id: string, patch: ProjectDetailsPatch): Promise<Project> {
+  const d = await db();
+  const tx = d.transaction('projects', 'readwrite');
+  const store = tx.objectStore('projects');
+  const project = await store.get(id);
+  if (!project) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new Error('プロジェクトが見つかりません(削除された可能性があります)');
+  }
+  const { note, ...rest } = patch;
+  const updated: Project = { ...project, ...rest, updatedAt: now() };
+  if (note) updated.note = note;
+  else delete updated.note;
+  await store.put(updated);
+  await tx.done;
+  return updated;
+}
+
 /** 生の段階データを変更せず、プロジェクト設定として表示・出力倍率を保存する。 */
 export async function updateProjectScaleCalibration(
   id: string,

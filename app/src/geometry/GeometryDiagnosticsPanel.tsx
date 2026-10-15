@@ -4,6 +4,7 @@ import { useI18n } from '../i18n';
 import type { Project } from '../types';
 import { Badge, Section } from '../ui/common';
 import { downloadBlob } from '../ui/misc';
+import { approxSizeMismatchRatio } from '../ui/projectValidation';
 import { geometryHistoryLabel, geometryOriginLabel } from './labels';
 import { geometryBlob, listGeometryAssets, type GeometryAsset } from './repository';
 import { createGeometryReport, diagnosticScale, type GeometryReport } from './report';
@@ -86,6 +87,7 @@ export function GeometryDiagnosticsPanel(props: { project: Project; refreshKey: 
   const number = (value: number) => Number(value.toPrecision(7)).toLocaleString(undefined, { maximumSignificantDigits: 7 });
   const diagnostics = report?.diagnostics;
   const topology = diagnostics?.topology;
+  const mismatch = diagnostics ? approxSizeMismatchRatio(props.project.approxSize, diagnostics.bounds.size) : null;
   const issueCount = (diagnostics?.degenerateTriangles ?? 0) + (topology?.boundaryEdges ?? 0) +
     (topology?.nonManifoldEdges ?? 0) + (topology?.inconsistentWindingEdges ?? 0) + (topology?.duplicateTriangles ?? 0);
 
@@ -152,6 +154,10 @@ export function GeometryDiagnosticsPanel(props: { project: Project; refreshKey: 
               <div><dt>{tr('重複面', 'Duplicate faces')}</dt><dd>{topology.duplicateTriangles.toLocaleString()}</dd></div>
             </>}
           </dl>
+          {mismatch !== null && <p className="warn-box" role="alert">{tr(
+            `診断した寸法(最大 ${number(Math.max(...diagnostics.bounds.size))} ${props.project.unit})は、プロジェクトの概算寸法(最大 ${number(Math.max(props.project.approxSize.w, props.project.approxSize.h, props.project.approxSize.d))} ${props.project.unit})の約${number(mismatch)}倍です。入力単位・スケール校正・概算寸法のいずれかを確認してください。`,
+            `The inspected size (max ${number(Math.max(...diagnostics.bounds.size))} ${props.project.unit}) is about ${number(mismatch)}× the project's approximate size (max ${number(Math.max(props.project.approxSize.w, props.project.approxSize.h, props.project.approxSize.d))} ${props.project.unit}). Check the input unit, scale calibration, or the approximate size.`,
+          )}</p>}
           {diagnostics.topologySkipReason === 'limit' && <p className="warn-box">{tr(
             '辺・重複面の検査は未実施です。頂点または三角形が20万を超えるため、寸法・面積・退化面のみ検査しました。',
             'Edge and duplicate-face checks were skipped: the geometry exceeds 200,000 vertices or triangles. Only dimensions, area and degenerate faces were checked.',

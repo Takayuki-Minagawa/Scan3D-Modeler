@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { reconcileJobs } from './jobs/runner';
 import { ProjectList } from './ui/ProjectList';
 import { ProjectPage } from './ui/ProjectPage';
+import { parseHashRoute, projectHash } from './ui/route';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(window.location.hash);
@@ -35,11 +36,16 @@ export default function App() {
 
   if (!ready) return null;
 
-  const m = hash.match(/^#\/p\/([0-9a-f-]+)/i);
-  if (m) {
+  const route = parseHashRoute(hash);
+  if (route.kind === 'project') {
     return (
       <ProjectPage
-        projectId={m[1]}
+        projectId={route.id}
+        tab={route.tab}
+        onTabChange={(tab) => {
+          // タブをURLに反映し、再読込・共有・ブラウザの戻る/進むで同じタブへ戻れるようにする
+          window.location.hash = projectHash(route.id, tab);
+        }}
         onBack={() => {
           window.location.hash = '#/';
         }}
@@ -49,7 +55,7 @@ export default function App() {
   return (
     <ProjectList
       onOpen={(id) => {
-        window.location.hash = `#/p/${id}`;
+        window.location.hash = projectHash(id);
       }}
     />
   );
