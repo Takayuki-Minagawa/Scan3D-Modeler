@@ -16,7 +16,9 @@ import { formatJobError, formatJobMessage, formatJobTitle, formatStageStats, job
 import type { AssetMeta, JobRecord, Stage, StageKind } from '../types';
 import { STAGE_ORDER } from '../types';
 import { Badge, ProgressBar, Section } from '../ui/common';
-import { fmtDateTime } from '../ui/misc';
+import { fmtDateTime, fmtDuration } from '../ui/misc';
+
+const JOB_LIST_LIMIT = 12;
 import { DEMO_DEFAULT_PARAMS } from './demoReconstruct';
 
 /**
@@ -31,6 +33,7 @@ export function PipelinePanel(props: { projectId: string }) {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [images, setImages] = useState<AssetMeta[]>([]);
   const [error, setError] = useState<{ ja: string; en: string } | null>(null);
+  const [showAllJobs, setShowAllJobs] = useState(false);
   const stageLabels: Record<StageKind, string> = {
     frames: tr('キーフレーム', 'Key frames'),
     sparse: tr('カメラ位置推定(SfM)', 'Camera poses (SfM)'),
@@ -102,7 +105,7 @@ export function PipelinePanel(props: { projectId: string }) {
           </button>
         }
       >
-        {error && <p className="warn-box">{tr(error.ja, error.en)}</p>}
+        {error && <p className="warn-box" role="alert">{tr(error.ja, error.en)}</p>}
         <div className="stage-flow">
           <div className="stage-card">
             <div className="stage-name">{tr('画像セット', 'Image set')}</div>
@@ -173,8 +176,17 @@ export function PipelinePanel(props: { projectId: string }) {
           <p className="hint">{tr('ジョブはまだありません。', 'No jobs yet.')}</p>
         ) : (
           <ul className="job-list">
-            {jobs.slice(0, 12).map((j) => {
-              const message = formatJobMessage(j, language);
+            {(showAllJobs ? jobs : jobs.slice(0, JOB_LIST_LIMIT)).map((j) => {
+              const terminal = j.status === 'done' || j.status === 'failed' || j.status === 'canceled';
+              // 完了ジョブは状態バッジと重複する「完了」ではなく、生成した段階データの成果を示す
+              const results = j.status === 'done'
+                ? stages.filter((s) => j.stageIds?.includes(s.id) && s.stats)
+                    .map((s) => `${stageLabels[s.kind]}: ${formatStageStats(s.stats!, language)}`)
+                : [];
+              const rawMessage = formatJobMessage(j, language);
+              const message = j.status === 'done' && (results.length > 0 || j.messageText?.key === 'message.completed' || j.message === '完了')
+                ? (results.length > 0 ? results.join(' / ') : null)
+                : rawMessage;
               const errorMessage = formatJobError(j, language);
               return (
               <li key={j.id} className="job-item">
@@ -193,7 +205,10 @@ export function PipelinePanel(props: { projectId: string }) {
                   >
                     {jobStatusLabels[j.status]}
                   </Badge>
-                  <span className="job-date">{fmtDateTime(j.createdAt, language)}</span>
+                  <span className="job-date">
+                    {fmtDateTime(j.createdAt, language)}
+                    {terminal && tr(` · 経過 ${fmtDuration(j.updatedAt - j.createdAt, language)}`, ` · elapsed ${fmtDuration(j.updatedAt - j.createdAt, language)}`)}
+                  </span>
                 </div>
                 {(j.status === 'running' || j.status === 'paused') && (
                   <ProgressBar value={j.progress} />
@@ -227,6 +242,19 @@ export function PipelinePanel(props: { projectId: string }) {
             })}
           </ul>
         )}
+        {jobs.length > JOB_LIST_LIMIT && (
+          <div className="row wrap">
+            <span className="hint">
+              {showAllJobs
+                ? tr(`全${jobs.length}件を表示中`, `Showing all ${jobs.length} jobs`)
+                : tr(`最新${JOB_LIST_LIMIT}件を表示(全${jobs.length}件)`, `Showing the latest ${JOB_LIST_LIMIT} of ${jobs.length} jobs`)}
+            </span>
+            <button type="button" className="mini" onClick={() => setShowAllJobs((v) => !v)}>
+              {showAllJobs ? tr(`最新${JOB_LIST_LIMIT}件のみ`, `Latest ${JOB_LIST_LIMIT} only`) : tr('すべて表示', 'Show all')}
+            </button>
+          </div>
+        )}
+        <p className="hint">{tr('経過時間は作成から終了までで、一時停止中の時間を含みます。', 'Elapsed time runs from creation to completion and includes paused time.')}</p>
       </Section>
     </>
   );

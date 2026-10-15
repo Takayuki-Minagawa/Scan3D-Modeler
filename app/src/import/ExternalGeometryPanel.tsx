@@ -59,7 +59,7 @@ export function ExternalGeometryPanel(props: { project: Project; onChanged: () =
           {busy ? tr('検査・保存中…', 'Validating and saving…') : tr('形状を取り込む', 'Import geometry')}
         </button>
       </div>
-      {message && <p className="hint">{tr(message.ja, message.en)}</p>}
+      <p className="hint" role="status" aria-live="polite" aria-busy={busy}>{message && tr(message.ja, message.en)}</p>
     </Section>
   );
 }
