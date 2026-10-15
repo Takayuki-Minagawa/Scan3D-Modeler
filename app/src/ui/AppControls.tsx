@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { BUILD_INFO } from '../buildInfo';
 import { useI18n } from '../i18n';
+import { fmtDateTime } from './misc';
 import {
   activatePwaUpdate,
   getRuntimeIsolationStatus,
@@ -7,6 +9,7 @@ import {
   reloadForPwaActivation,
   type RuntimeIsolationStatus,
 } from '../pwa';
+import { useConfirm } from './ConfirmDialog';
 import { ManualDialog } from './ManualDialog';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -14,6 +17,7 @@ import { ThemeToggle } from './ThemeToggle';
 export function AppControls() {
   const { language, toggleLanguage, tr } = useI18n();
   const [manualOpen, setManualOpen] = useState(false);
+  const [confirmDialog, confirm] = useConfirm();
   const isJapanese = language === 'ja';
   const closeManual = useCallback(() => setManualOpen(false), []);
   const [isolation, setIsolation] = useState<RuntimeIsolationStatus>(() =>
@@ -37,17 +41,16 @@ export function AppControls() {
     reload: tr('再読込でWASM並列を有効化', 'Reload to enable WASM threads'),
   };
 
-  function confirmReloadForPwa(): boolean {
-    return window.confirm(
-      tr(
-        'アプリを再読み込みします。録画中のデータや入力途中の内容は失われるため、先に保存または一時停止してください。続けますか?',
-        'The app will reload. Unsaved recording data and in-progress input will be lost, so save or pause first. Continue?',
+  async function handlePwaAction(): Promise<void> {
+    const answer = await confirm({
+      title: tr('アプリを再読み込み', 'Reload the app'),
+      message: tr(
+        'アプリを再読み込みします。録画中のデータや入力途中の内容は失われるため、先に保存または一時停止してください。',
+        'The app will reload. Unsaved recording data and in-progress input will be lost, so save or pause first.',
       ),
-    );
-  }
-
-  function handlePwaAction(): void {
-    if (!confirmReloadForPwa()) return;
+      confirmLabel: tr('再読み込みする', 'Reload'),
+    });
+    if (!answer) return;
     if (isolation === 'update') activatePwaUpdate();
     else reloadForPwaActivation();
   }
@@ -66,7 +69,7 @@ export function AppControls() {
         {isolationText[isolation]}
       </span>
       {(isolation === 'update' || isolation === 'reload' || isolation === 'failed') && (
-        <button type="button" className="mini" onClick={handlePwaAction}>
+        <button type="button" className="mini" onClick={() => void handlePwaAction()}>
           {isolation === 'update'
             ? tr('更新して再読み込み', 'Update and reload')
             : isolation === 'failed'
@@ -99,7 +102,16 @@ export function AppControls() {
       >
         {tr('簡易マニュアル', 'Quick guide')}
       </button>
+      <span
+        className="build-info"
+        title={tr('アプリのビルド版(コミット・ビルド日時)', 'App build (commit and build time)')}
+        data-testid="build-info"
+      >
+        {tr('版', 'Build')} {BUILD_INFO.commit}
+        {BUILD_INFO.builtAt && ` · ${fmtDateTime(Date.parse(BUILD_INFO.builtAt), language)}`}
+      </span>
       <ManualDialog open={manualOpen} onClose={closeManual} />
+      {confirmDialog}
     </div>
   );
 }

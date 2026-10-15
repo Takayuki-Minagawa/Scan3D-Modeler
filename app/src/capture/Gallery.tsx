@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachAssetThumbnail,
   deleteAsset,
@@ -9,6 +9,8 @@ import {
 import { useI18n } from '../i18n';
 import type { AssetMeta } from '../types';
 import { Badge, Section } from '../ui/common';
+import { useConfirm } from '../ui/ConfirmDialog';
+import { useDialogFocus } from '../ui/dialogFocus';
 import { prepareImageAsset } from './imageUtil';
 import { diagnoseThumbnail, profileThumbnail, type ThumbnailDiagnosis, type ThumbnailProfile } from './diagnosis';
 
@@ -31,11 +33,22 @@ function localCaptureTime(value: string | undefined): string | undefined {
   return value?.replace('T', ' ');
 }
 
-function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSaved: (asset: AssetMeta) => void }) {
+function frameTime(asset: AssetMeta): string | undefined {
+  const ms = legacyNumber(asset, 'timeMs');
+  return ms === undefined ? undefined : `${(ms / 1000).toFixed(2)}s`;
+}
+
+function ImageDetailDialog(props: {
+  asset: AssetMeta;
+  position: { index: number; total: number };
+  onClose: () => void;
+  onSaved: (asset: AssetMeta) => void;
+  onStep: (delta: 1 | -1) => void;
+  onDelete: () => void;
+}) {
   const { tr } = useI18n();
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [focalPx, setFocalPx] = useState(String(props.asset.image?.intrinsics?.focalPx ?? ''));
@@ -66,48 +79,36 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSav
     };
   }, [props.asset.id]);
 
+  useDialogFocus(true, dialogRef, closeRef, props.onClose);
+
+  // ←→で前後の画像へ。入力欄では通常のカーソル移動を優先する。
+  const { onStep } = props;
   useEffect(() => {
-    restoreFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const timer = window.setTimeout(() => closeRef.current?.focus(), 0);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        props.onClose();
-        return;
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return;
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
+        onStep(-1);
+      } else if (event.key === 'ArrowRight') {
         event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
+        onStep(1);
       }
     };
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener('keydown', onKeyDown);
-      restoreFocusRef.current?.focus();
-    };
-  }, [props.onClose]);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onStep]);
 
   const { width, height } = imageDimensions(props.asset);
   const image = props.asset.image;
   const intrinsics = image?.intrinsics;
   async function saveFocalHint() {
-    const value = Number(focalPx);
-    if (!Number.isFinite(value) || value <= 0 || value > 100_000 || !focalNote.trim()) {
-      setFocalError(tr('正のpx値と入力根拠を記入してください。', 'Enter a positive pixel value and its source.'));
+    const value = focalPx.trim() ? Number(focalPx) : Number.NaN;
+    const problems: string[] = [];
+    if (!Number.isFinite(value)) problems.push(tr('焦点距離は数値(px)で入力してください。', 'Enter the focal length as a number in pixels.'));
+    else if (value <= 0 || value > 100_000) problems.push(tr('焦点距離は1〜100,000 pxの範囲で入力してください。', 'Focal length must be between 1 and 100,000 px.'));
+    if (!focalNote.trim()) problems.push(tr('入力根拠は必須です(撮影機器の仕様など)。', 'A source note is required (e.g. the camera specification).'));
+    if (problems.length > 0) {
+      setFocalError(problems.join(' '));
       return;
     }
     const updated: AssetMeta = {
@@ -142,12 +143,26 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSav
       >
         <div className="manual-head">
           <div>
-            <p className="eyebrow">{tr('原画', 'Original image')}</p>
+            <p className="eyebrow">
+              {tr('原画', 'Original image')} · {props.position.index} / {props.position.total}
+              {frameTime(props.asset) && ` · ${tr('動画時刻', 'Video time')} ${frameTime(props.asset)}`}
+            </p>
             <h2 id="image-detail-title">{props.asset.name}</h2>
           </div>
-          <button ref={closeRef} type="button" className="mini" onClick={props.onClose}>
-            {tr('閉じる', 'Close')}
-          </button>
+          <div className="row wrap">
+            <button type="button" className="mini" disabled={props.position.index <= 1} onClick={() => props.onStep(-1)} aria-label={tr('前の画像', 'Previous image')} title={tr('前の画像 (←)', 'Previous image (←)')}>
+              ←
+            </button>
+            <button type="button" className="mini" disabled={props.position.index >= props.position.total} onClick={() => props.onStep(1)} aria-label={tr('次の画像', 'Next image')} title={tr('次の画像 (→)', 'Next image (→)')}>
+              →
+            </button>
+            <button type="button" className="mini danger" onClick={props.onDelete}>
+              {tr('削除', 'Delete')}
+            </button>
+            <button ref={closeRef} type="button" className="mini" onClick={props.onClose}>
+              {tr('閉じる', 'Close')}
+            </button>
+          </div>
         </div>
         <div className="image-detail-content">
           <div className="image-detail-preview">
@@ -233,7 +248,7 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSav
             <label>{tr('焦点距離 (px)', 'Focal length (px)')} <input type="number" min="0" max="100000" step="any" value={focalPx} onChange={(event) => setFocalPx(event.target.value)} /></label>
             <label>{tr('入力根拠', 'Source note')} <input type="text" value={focalNote} onChange={(event) => setFocalNote(event.target.value)} /></label>
             <button type="button" onClick={() => void saveFocalHint()}>{tr('候補を保存', 'Save hint')}</button>
-            {focalError && <p className="warn-box">{focalError}</p>}
+            {focalError && <p className="warn-box" role="alert">{focalError}</p>}
           </div>
         </div>
       </div>
@@ -247,11 +262,13 @@ function ImageDetailDialog(props: { asset: AssetMeta; onClose: () => void; onSav
  */
 export function Gallery(props: { projectId: string; refreshKey: number; onChanged: () => void }) {
   const { tr } = useI18n();
+  const [confirmDialog, confirm] = useConfirm();
   const [assets, setAssets] = useState<AssetMeta[]>([]);
   const [urls, setUrls] = useState<Map<string, string>>(new Map());
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<AssetMeta | null>(null);
   const [thumbnailFailures, setThumbnailFailures] = useState(0);
+  const [listReady, setListReady] = useState(false);
   const [thumbnailDiagnostics, setThumbnailDiagnostics] = useState<Map<string, ThumbnailDiagnosis>>(new Map());
 
   useEffect(() => {
@@ -262,6 +279,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
       if (!alive) return;
       setAssets(list);
       setUrls(new Map());
+      setListReady(false);
       setThumbnailFailures(0);
       setThumbnailDiagnostics(new Map());
       const map = new Map<string, string>();
@@ -346,6 +364,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         setUrls(new Map(map));
         setThumbnailFailures(failures);
         setThumbnailDiagnostics(new Map(diagnostics));
+        setListReady(true);
       }
     })().catch(() => {
       // 一覧構築が途中で失敗した場合、まだstateへ渡していないURLもその場で破棄する。
@@ -367,6 +386,19 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
     [assets, filter],
   );
   const keptCount = assets.filter((a) => !a.excluded).length;
+  const excludedCount = assets.length - keptCount;
+  const selectedIndex = selected ? shown.findIndex((a) => a.id === selected.id) : -1;
+  const closeDetail = useCallback(() => setSelected(null), []);
+  const stepDetail = useCallback(
+    (delta: 1 | -1) => {
+      setSelected((current) => {
+        const index = current ? shown.findIndex((a) => a.id === current.id) : -1;
+        const next = index >= 0 ? shown[index + delta] : undefined;
+        return next ?? current;
+      });
+    },
+    [shown],
+  );
 
   async function toggle(a: AssetMeta) {
     await updateAsset(a.id, { excluded: !a.excluded });
@@ -376,6 +408,16 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
 
   async function excludeBlurry() {
     const targets = assets.filter((a) => a.quality?.sharp === false && !a.excluded);
+    if (targets.length === 0) return;
+    const answer = await confirm({
+      title: tr('ブレ画像を一括除外', 'Exclude blurry images'),
+      message: tr(
+        `ブレ候補${targets.length}枚を除外します。除外は「除外をすべて採用に戻す」や各カードから取り消せます。`,
+        `Exclude ${targets.length} possibly blurred image(s)? You can undo with “Keep all excluded” or per card.`,
+      ),
+      confirmLabel: tr('除外する', 'Exclude'),
+    });
+    if (!answer) return;
     for (const target of targets) await updateAsset(target.id, { excluded: true });
     setAssets((prev) =>
       prev.map((asset) =>
@@ -385,14 +427,31 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
     props.onChanged();
   }
 
+  async function restoreExcluded() {
+    const targets = assets.filter((a) => a.excluded);
+    if (targets.length === 0) return;
+    const answer = await confirm({
+      title: tr('除外をすべて採用に戻す', 'Keep all excluded images'),
+      message: tr(`除外中の${targets.length}枚をすべて採用に戻します。`, `Mark all ${targets.length} excluded image(s) as kept?`),
+      confirmLabel: tr('採用に戻す', 'Keep all'),
+    });
+    if (!answer) return;
+    for (const target of targets) await updateAsset(target.id, { excluded: false });
+    setAssets((prev) => prev.map((asset) => (asset.excluded ? { ...asset, excluded: false } : asset)));
+    props.onChanged();
+  }
+
   async function remove(a: AssetMeta) {
     if (
-      !window.confirm(
-        tr(
-          `「${a.name}」を削除しますか?(元に戻せません)`,
+      !(await confirm({
+        title: tr('画像を削除', 'Delete image'),
+        message: tr(
+          `「${a.name}」を削除します。元に戻せません。`,
           `Delete “${a.name}”? This cannot be undone.`,
         ),
-      )
+        confirmLabel: tr('削除する', 'Delete'),
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -422,6 +481,11 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
           <button type="button" onClick={() => void excludeBlurry()}>
             {tr('ブレ画像を一括除外', 'Exclude blurry images')}
           </button>
+          {excludedCount > 0 && (
+            <button type="button" onClick={() => void restoreExcluded()}>
+              {tr('除外をすべて採用に戻す', 'Keep all excluded')}
+            </button>
+          )}
         </div>
       }
     >
@@ -454,12 +518,14 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
                   {urls.get(a.id) ? (
                     <img src={urls.get(a.id)} alt={a.name} loading="lazy" />
                   ) : (
-                    <div className="shot-loading">…</div>
+                    <div className="shot-loading">{listReady ? tr('読込不可', 'Unreadable') : '…'}</div>
                   )}
                 </button>
                 <figcaption>
+                  <div className="shot-name" title={a.name}>{a.name}</div>
                   <div className="shot-caption-row">
-                    <span>{a.kind === 'frame' ? 'F' : 'P'}</span>
+                    <span title={a.kind === 'frame' ? tr('動画からの抽出フレーム', 'Extracted video frame') : tr('撮影/取込画像', 'Captured or imported image')}>{a.kind === 'frame' ? 'F' : 'P'}</span>
+                    {listReady && !urls.get(a.id) && <Badge tone="err">{tr('読込不可', 'Unreadable')}</Badge>}
                     {a.quality?.blur !== undefined && (
                       <Badge tone={a.quality.sharp ? 'ok' : 'warn'}>{a.quality.blur}</Badge>
                     )}
@@ -498,7 +564,11 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
                         {tr('類似先を開く', 'Open similar image')}: {assets.find((item) => item.id === diagnosis.similarTo)?.name ?? diagnosis.similarTo}
                       </button>
                     )}
+                    {frameTime(a) && <span>{tr('動画時刻', 'Video time')} {frameTime(a)}</span>}
                     {!intrinsics?.focalPx && <span>{tr('焦点距離候補なし', 'No focal hint')}</span>}
+                    {intrinsics?.focalPxSource === 'user' && intrinsics.focalPx !== undefined && (
+                      <span>{tr('焦点', 'Focal')} {Math.round(intrinsics.focalPx)} px ({tr('手入力', 'manual')})</span>
+                    )}
                     {width !== undefined && height !== undefined && (
                       <span>{Math.round(width)} × {Math.round(height)} px</span>
                     )}
@@ -532,7 +602,7 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
         </div>
       )}
       {thumbnailFailures > 0 && (
-        <p className="warn-box">
+        <p className="warn-box" role="status">
           {tr(
             `${thumbnailFailures}枚のサムネイルを作成できませんでした。カードから原画の読込を試せます。`,
             `Could not create ${thumbnailFailures} thumbnail(s). You can still try opening the original from the card.`,
@@ -545,11 +615,24 @@ export function Gallery(props: { projectId: string; refreshKey: number; onChange
           'Select a card to view the original and capture details. The number is a blur score (higher is sharper). P = captured/imported image; F = extracted video frame.',
         )}
       </p>
-      {selected && <ImageDetailDialog asset={selected} onClose={() => setSelected(null)} onSaved={(updated) => {
-        setSelected(updated);
-        setAssets((previous) => previous.map((asset) => asset.id === updated.id ? updated : asset));
-        props.onChanged();
-      }} />}
+      {selected && <ImageDetailDialog
+        asset={selected}
+        position={{ index: selectedIndex + 1, total: shown.length }}
+        onClose={closeDetail}
+        onStep={stepDetail}
+        onDelete={() => {
+          // 詳細を閉じてから確認を出し、2つのモーダルのフォーカス制御が重ならないようにする
+          const target = selected;
+          setSelected(null);
+          void remove(target);
+        }}
+        onSaved={(updated) => {
+          setSelected(updated);
+          setAssets((previous) => previous.map((asset) => asset.id === updated.id ? updated : asset));
+          props.onChanged();
+        }}
+      />}
+      {confirmDialog}
     </Section>
   );
 }

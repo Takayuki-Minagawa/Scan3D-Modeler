@@ -16,6 +16,17 @@ export function fmtDateTime(t: number, language: 'ja' | 'en' = 'ja'): string {
   }).format(new Date(t));
 }
 
+/** ジョブの経過時間など、秒〜時間の大まかな表示。 */
+export function fmtDuration(ms: number, language: 'ja' | 'en' = 'ja'): string {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 60) return language === 'ja' ? `${seconds.toFixed(1)}秒` : `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  if (minutes < 60) return language === 'ja' ? `${minutes}分${rest}秒` : `${minutes} min ${rest} s`;
+  const hours = Math.floor(minutes / 60);
+  return language === 'ja' ? `${hours}時間${minutes % 60}分` : `${hours} h ${minutes % 60} min`;
+}
+
 export function timestampName(): string {
   const d = new Date();
   const p = (v: number) => String(v).padStart(2, '0');

@@ -19,6 +19,11 @@ const entry = {
   geometryExportClient: path.join(appDir, 'src/export/geometryWorkerClient.ts'),
   geometryExportWorker: path.join(appDir, 'src/export/geometry.worker.ts'),
   zipLimits: path.join(appDir, 'src/export/zipLimits.ts'),
+  importFiles: path.join(appDir, 'src/capture/importFiles.ts'),
+  cameraError: path.join(appDir, 'src/capture/cameraError.ts'),
+  videoFrames: path.join(appDir, 'src/db/videoFrames.ts'),
+  projectValidation: path.join(appDir, 'src/ui/projectValidation.ts'),
+  route: path.join(appDir, 'src/ui/route.ts'),
 };
 
 // Bundle TypeScript with the application's existing compiler. Node 20.19+ can

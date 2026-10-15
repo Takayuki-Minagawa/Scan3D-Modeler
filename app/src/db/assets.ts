@@ -1,5 +1,8 @@
 import { db, uid, now } from './db';
 import type { AssetKind, AssetMeta, ImageAssetMetadata } from '../types';
+import { framesOfVideo } from './videoFrames';
+
+export { framesOfVideo };
 
 export interface NewAssetThumbnail {
   blob: Blob;
@@ -17,6 +20,8 @@ export interface NewAsset {
   quality?: AssetMeta['quality'];
   thumbnail?: NewAssetThumbnail;
   image?: ImageAssetMetadata;
+  /** frame から抽出元 video への参照。ZIP復元時にIDが振り直される。 */
+  sourceAssetId?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -35,6 +40,7 @@ export async function addAsset(input: NewAsset): Promise<AssetMeta> {
     excluded: input.excluded,
     quality: input.quality,
     thumbnailAssetId: thumbnailId,
+    sourceAssetId: input.sourceAssetId,
     image: input.image,
     meta: input.meta,
     createdAt,
@@ -208,4 +214,63 @@ export async function deleteAsset(id: string): Promise<void> {
   }
   await Promise.all(deletes);
   await tx.done;
+}
+
+export class VideoInUseError extends Error {
+  constructor() {
+    super('この動画のフレーム抽出ジョブが実行中または一時停止中です。パイプラインタブで中止してから削除してください');
+    this.name = 'VideoInUseError';
+  }
+}
+
+/**
+ * 動画を削除する。抽出済みフレームは同時に削除するか、動画への参照だけ外して残す。
+ * 抽出ジョブの確認と削除を単一transactionで行い、実行中ジョブの入力を消さない。
+ */
+export async function deleteVideoAsset(
+  videoId: string,
+  options: { deleteFrames: boolean },
+): Promise<{ frames: number }> {
+  const d = await db();
+  const tx = d.transaction(['assets', 'blobs', 'jobs'], 'readwrite');
+  const assetsStore = tx.objectStore('assets');
+  const blobs = tx.objectStore('blobs');
+  const video = await assetsStore.get(videoId);
+  if (!video || video.kind !== 'video') {
+    await tx.done;
+    return { frames: 0 };
+  }
+  const jobs = await tx.objectStore('jobs').index('byProject').getAll(video.projectId);
+  if (
+    jobs.some(
+      (job) =>
+        job.type === 'extractFrames' &&
+        (job.status === 'running' || job.status === 'paused') &&
+        job.params.videoAssetId === videoId,
+    )
+  ) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    throw new VideoInUseError();
+  }
+  const projectAssets = await assetsStore.index('byProject').getAll(video.projectId);
+  const frames = framesOfVideo(video, projectAssets);
+  const byId = new Map(projectAssets.map((asset) => [asset.id, asset]));
+  const writes: Promise<unknown>[] = [assetsStore.delete(videoId), blobs.delete(videoId)];
+  for (const frame of frames) {
+    if (options.deleteFrames) {
+      writes.push(assetsStore.delete(frame.id), blobs.delete(frame.id));
+      const thumbnail = frame.thumbnailAssetId ? byId.get(frame.thumbnailAssetId) : undefined;
+      if (thumbnail?.kind === 'thumbnail' && thumbnail.sourceAssetId === frame.id) {
+        writes.push(assetsStore.delete(thumbnail.id), blobs.delete(thumbnail.id));
+      }
+    } else if (frame.sourceAssetId === videoId) {
+      // 参照切れを残さない(ZIP検証は frame→video 参照の実在を要求する)。
+      const { sourceAssetId: _removed, ...rest } = frame;
+      writes.push(assetsStore.put(rest));
+    }
+  }
+  await Promise.all(writes);
+  await tx.done;
+  return { frames: frames.length };
 }

@@ -10,8 +10,28 @@ import { formatBytes, formatStoragePercent } from './metrics';
 
 type PersistenceRequestState = 'idle' | 'requesting' | 'denied' | 'failed';
 
-export function StoragePanel(props: { refreshKey: number; onManageStorage: () => void }) {
+const EXPANDED_KEY = 'scan2fem:storageCardExpanded';
+
+function readExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(EXPANDED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/** compact: プロジェクト画面では1行表示を既定にし、警告時だけ自動で展開する。 */
+export function StoragePanel(props: { refreshKey: number; onManageStorage: () => void; compact?: boolean }) {
   const { language, tr } = useI18n();
+  const [expanded, setExpandedState] = useState(readExpanded);
+  function setExpanded(next: boolean) {
+    setExpandedState(next);
+    try {
+      window.localStorage.setItem(EXPANDED_KEY, String(next));
+    } catch {
+      // 保存できなくても表示状態はこの画面の間だけ保つ
+    }
+  }
   const [snapshot, setSnapshot] = useState<BrowserStorageSnapshot | null>(null);
   const [requestState, setRequestState] = useState<PersistenceRequestState>('idle');
 
@@ -48,6 +68,38 @@ export function StoragePanel(props: { refreshKey: number; onManageStorage: () =>
       ? 0
       : Math.min(100, Math.max(0, snapshot.ratio * 100));
   const hasEstimate = Boolean(snapshot && snapshot.usage !== null && snapshot.quota !== null);
+  const persistenceBadge =
+    snapshot?.persisted === true ? (
+      <Badge tone="ok">{tr('永続保存 有効', 'Persistent storage on')}</Badge>
+    ) : snapshot?.persisted === false ? (
+      <Badge tone="warn">{tr('永続保存 未許可', 'Persistent storage off')}</Badge>
+    ) : snapshot?.persistenceSupported ? (
+      <Badge tone="info">{tr('永続保存 状態不明', 'Persistence status unknown')}</Badge>
+    ) : snapshot ? (
+      <Badge tone="info">{tr('永続保存 非対応', 'Persistence unavailable')}</Badge>
+    ) : null;
+  const collapsed = Boolean(props.compact) && !expanded && !snapshot?.warning;
+
+  if (collapsed) {
+    return (
+      <section className="card storage-card storage-card-compact" aria-labelledby="storage-card-title">
+        <div className="storage-compact-row">
+          <h2 id="storage-card-title">{tr('端末ストレージ', 'Device storage')}</h2>
+          <span className="hint">
+            {!snapshot
+              ? tr('確認中…', 'Checking…')
+              : hasEstimate
+                ? `${formatBytes(snapshot.usage, language)} / ${formatBytes(snapshot.quota, language)}${snapshot.ratio !== null ? ` (${formatStoragePercent(snapshot.ratio)})` : ''}`
+                : tr('容量情報なし', 'No capacity estimate')}
+          </span>
+          {persistenceBadge}
+          <button type="button" className="mini" aria-expanded={false} onClick={() => setExpanded(true)} data-testid="storage-expand">
+            {tr('詳細を表示', 'Show details')}
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section
@@ -64,15 +116,14 @@ export function StoragePanel(props: { refreshKey: number; onManageStorage: () =>
             )}
           </p>
         </div>
-        {snapshot?.persisted === true ? (
-          <Badge tone="ok">{tr('永続保存 有効', 'Persistent storage on')}</Badge>
-        ) : snapshot?.persisted === false ? (
-          <Badge tone="warn">{tr('永続保存 未許可', 'Persistent storage off')}</Badge>
-        ) : snapshot?.persistenceSupported ? (
-          <Badge tone="info">{tr('永続保存 状態不明', 'Persistence status unknown')}</Badge>
-        ) : snapshot ? (
-          <Badge tone="info">{tr('永続保存 非対応', 'Persistence unavailable')}</Badge>
-        ) : null}
+        <div className="row wrap">
+          {persistenceBadge}
+          {props.compact && !snapshot?.warning && (
+            <button type="button" className="mini" aria-expanded={true} onClick={() => setExpanded(false)}>
+              {tr('折りたたむ', 'Collapse')}
+            </button>
+          )}
+        </div>
       </div>
 
       {!snapshot ? (

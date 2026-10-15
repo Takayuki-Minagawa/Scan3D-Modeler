@@ -115,6 +115,7 @@ export async function extractFramesEngine(
           projectId: ctx.job.projectId,
           stageId: cp.stageId,
           kind: 'frame',
+          sourceAssetId: videoAssetId,
           name: `frame_${String(Math.round(t)).padStart(7, '0')}ms.jpg`,
           blob: frameBlob,
           excluded: !sharp,
